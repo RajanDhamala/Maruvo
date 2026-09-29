@@ -1,0 +1,53 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# React / Node / Express
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/install-state.gz
+dist/
+build/
+out/
+.next/
+.vite/
+.turbo/
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Go binaries and test output
+bin/
+tmp/
+*.exe
+*.test
+*.prof
+*.coverprofile
+coverage.out
+/apps/api/Maruvo
+/apps/api/api
+
+# Rust / Solana / Anchor
+target/
+.anchor/
+.solana/
+test-ledger/
+*-keypair.json
+
+# Logs, editor files, and OS metadata
+*.log
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Keep dependency lockfiles and generated protobuf source in Git.

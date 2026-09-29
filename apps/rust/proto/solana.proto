@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package maruvo;
+
+service SolanaService {
+    rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+    string message = 1;
+}
