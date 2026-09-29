@@ -26,13 +26,19 @@ impl SolanaService for SolanaServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "127.0.0.1:50051".parse()?;
+    let addr = std::env::var("RUST_RPC_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:50051".into())
+        .parse()?;
 
     println!("gRPC listening on {}", addr);
 
     Server::builder()
         .add_service(SolanaServiceServer::new(SolanaServer))
-        .serve(addr)
+        .serve_with_shutdown(addr, async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to listen for Ctrl+C");
+        })
         .await?;
 
     Ok(())

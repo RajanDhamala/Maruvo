@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package maruvo;
 
+option go_package = "github.com/rajandhamala/Maruvo/pb;pb";
+
 service SolanaService {
     rpc Health (HealthRequest) returns (HealthResponse);
 }
