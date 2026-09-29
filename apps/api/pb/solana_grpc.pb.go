@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SolanaService_Health_FullMethodName = "/maruvo.SolanaService/Health"
+	SolanaService_Demo_FullMethodName   = "/maruvo.SolanaService/Demo"
 )
 
 // SolanaServiceClient is the client API for SolanaService service.
@@ -27,6 +28,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SolanaServiceClient interface {
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
+	// Local connection demo only; this does not submit a Solana transaction.
+	Demo(ctx context.Context, in *DemoRequest, opts ...grpc.CallOption) (*DemoResponse, error)
 }
 
 type solanaServiceClient struct {
@@ -47,11 +50,23 @@ func (c *solanaServiceClient) Health(ctx context.Context, in *HealthRequest, opt
 	return out, nil
 }
 
+func (c *solanaServiceClient) Demo(ctx context.Context, in *DemoRequest, opts ...grpc.CallOption) (*DemoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DemoResponse)
+	err := c.cc.Invoke(ctx, SolanaService_Demo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SolanaServiceServer is the server API for SolanaService service.
 // All implementations must embed UnimplementedSolanaServiceServer
 // for forward compatibility.
 type SolanaServiceServer interface {
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	// Local connection demo only; this does not submit a Solana transaction.
+	Demo(context.Context, *DemoRequest) (*DemoResponse, error)
 	mustEmbedUnimplementedSolanaServiceServer()
 }
 
@@ -64,6 +79,9 @@ type UnimplementedSolanaServiceServer struct{}
 
 func (UnimplementedSolanaServiceServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedSolanaServiceServer) Demo(context.Context, *DemoRequest) (*DemoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Demo not implemented")
 }
 func (UnimplementedSolanaServiceServer) mustEmbedUnimplementedSolanaServiceServer() {}
 func (UnimplementedSolanaServiceServer) testEmbeddedByValue()                       {}
@@ -104,6 +122,24 @@ func _SolanaService_Health_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SolanaService_Demo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DemoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SolanaServiceServer).Demo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SolanaService_Demo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SolanaServiceServer).Demo(ctx, req.(*DemoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SolanaService_ServiceDesc is the grpc.ServiceDesc for SolanaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +150,10 @@ var SolanaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _SolanaService_Health_Handler,
+		},
+		{
+			MethodName: "Demo",
+			Handler:    _SolanaService_Demo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

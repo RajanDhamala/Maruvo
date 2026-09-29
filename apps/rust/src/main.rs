@@ -5,7 +5,7 @@ pub mod maruvo {
 }
 
 use maruvo::{
-    HealthRequest, HealthResponse,
+    DemoRequest, DemoResponse, HealthRequest, HealthResponse,
     solana_service_server::{SolanaService, SolanaServiceServer},
 };
 
@@ -20,6 +20,21 @@ impl SolanaService for SolanaServer {
     ) -> Result<Response<HealthResponse>, Status> {
         Ok(Response::new(HealthResponse {
             message: "Maruvo Rust service running".into(),
+        }))
+    }
+
+    async fn demo(&self, request: Request<DemoRequest>) -> Result<Response<DemoResponse>, Status> {
+        let input = request.into_inner();
+        let message = input.message.trim();
+        if message.is_empty() || message.len() > 256 {
+            return Err(Status::invalid_argument(
+                "message must contain 1 to 256 bytes after trimming",
+            ));
+        }
+
+        Ok(Response::new(DemoResponse {
+            message: format!("Rust received: {message}"),
+            service: "maruvo-rust".into(),
         }))
     }
 }

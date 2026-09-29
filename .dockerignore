@@ -1,0 +1,10 @@
+.git
+.codex
+.agents
+.aws
+**/.env*
+**/target
+**/bin
+**/node_modules
+**/dist
+**/*.log

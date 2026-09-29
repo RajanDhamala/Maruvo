@@ -1,3 +1,5 @@
+
+// currently demo just for testing
 syntax = "proto3";
 
 package maruvo;
@@ -6,10 +8,20 @@ option go_package = "github.com/rajandhamala/Maruvo/pb;pb";
 
 service SolanaService {
     rpc Health (HealthRequest) returns (HealthResponse);
+    rpc Demo (DemoRequest) returns (DemoResponse);
 }
 
 message HealthRequest {}
 
 message HealthResponse {
     string message = 1;
+}
+
+message DemoRequest {
+    string message = 1;
+}
+
+message DemoResponse {
+    string message = 1;
+    string service = 2;
 }

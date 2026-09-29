@@ -33,6 +33,7 @@ tmp/
 coverage.out
 /apps/api/Maruvo
 /apps/api/api
+/apps/cli/cli
 
 # Rust / Solana / Anchor
 target/

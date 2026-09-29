@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,7 +12,9 @@ import (
 	pb "github.com/rajandhamala/Maruvo/pb"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func main() {
@@ -49,6 +52,40 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"message": response.GetMessage(),
+		})
+	})
+	app.HandleFunc("POST /demo", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Message string `json:"message"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil {
+			http.Error(w, "expected JSON with a message string", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			http.Error(w, "expected a single JSON object", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		response, err := client.Demo(ctx, &pb.DemoRequest{Message: input.Message})
+		if err != nil {
+			if status.Code(err) == codes.InvalidArgument {
+				http.Error(w, status.Convert(err).Message(), http.StatusBadRequest)
+				return
+			}
+			log.Printf("Rust demo RPC failed: %v", err)
+			http.Error(w, "Rust RPC service unavailable", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": response.GetMessage(),
+			"service": response.GetService(),
 		})
 	})
 
