@@ -52,3 +52,8 @@ test-ledger/
 Thumbs.db
 
 # Keep dependency lockfiles and generated protobuf source in Git.
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
