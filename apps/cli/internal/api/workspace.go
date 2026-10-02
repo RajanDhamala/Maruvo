@@ -1,0 +1,200 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+type WorkspaceEvent struct {
+	PostID    int64           `json:"post_id"`
+	ID        int64           `json:"id"`
+	ActorID   *int64          `json:"actor_id"`
+	Kind      string          `json:"kind"`
+	Data      json.RawMessage `json:"data"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type WorkspaceFile struct {
+	Purpose    string    `json:"purpose"`
+	ID         string    `json:"id"`
+	PostID     int64     `json:"post_id"`
+	UploadedBy int64     `json:"uploaded_by"`
+	Name       string    `json:"name"`
+	Size       int64     `json:"size"`
+	SHA256     string    `json:"sha256"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type WorkspaceState struct {
+	DeliveryFiles     []string   `json:"delivery_files"`
+	PostID            int64      `json:"post_id"`
+	LastEventID       int64      `json:"last_event_id"`
+	SubmittedAt       *time.Time `json:"submitted_at"`
+	Submission        string     `json:"submission"`
+	ReviewState       string     `json:"review_state"`
+	SubmissionVersion int64      `json:"submission_version"`
+	ReviewNote        string     `json:"review_note"`
+}
+
+type Workspace struct {
+	Post       Post             `json:"post"`
+	Escrow     Escrow           `json:"escrow"`
+	State      WorkspaceState   `json:"workspace"`
+	Files      []WorkspaceFile  `json:"files"`
+	Events     []WorkspaceEvent `json:"events"`
+	CanReview  bool             `json:"can_review"`
+	Settlement Settlement       `json:"settlement"`
+}
+
+func workspacePath(id int64) string { return fmt.Sprintf("/posts/%d", id) }
+
+func (c *Client) Workspace(ctx context.Context, token string, id int64) (Workspace, error) {
+	var result Workspace
+
+	err := c.request(ctx, http.MethodGet, workspacePath(id)+"/workspace", token, nil, &result)
+
+	return result, err
+}
+
+func (c *Client) SendMessage(ctx context.Context, token string, id int64, text string) error {
+	return c.requestJSON(
+		ctx,
+		http.MethodPost,
+		workspacePath(id)+"/messages",
+		token,
+		map[string]string{"text": text},
+		nil,
+	)
+}
+
+func (c *Client) SubmitWork(ctx context.Context, token string, id int64, note string) error {
+	return c.requestJSON(
+		ctx,
+		http.MethodPost,
+		workspacePath(id)+"/submit",
+		token,
+		map[string]string{"note": note},
+		nil,
+	)
+}
+
+func (c *Client) SubmitDelivery(
+	ctx context.Context,
+	token string,
+	id, version int64,
+	note string,
+	files, inputs []string,
+) error {
+	return c.requestJSON(
+		ctx,
+		http.MethodPost,
+		workspacePath(id)+"/submit",
+		token,
+		map[string]any{"note": note, "submission_version": version, "files": files, "input_files": inputs},
+		nil,
+	)
+}
+
+func localPath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+
+	return path
+}
+
+type WorkspaceStream struct {
+	conn      *websocket.Conn
+	stopWatch func() bool
+}
+
+type StreamFrame struct {
+	Event string          `json:"event"`
+	Data  json.RawMessage `json:"data"`
+}
+
+func (c *Client) ConnectWorkspace(
+	ctx context.Context,
+	token string,
+	id, after int64,
+) (*WorkspaceStream, error) {
+	u, err := url.Parse(c.baseURL + "/ws")
+	if err != nil {
+		return nil, err
+	}
+
+	switch u.Scheme {
+	case "http":
+		u.Scheme = "ws"
+	case "https":
+		u.Scheme = "wss"
+	default:
+		return nil, errors.New("API URL must use http or https")
+	}
+
+	q := u.Query()
+	q.Set("post_id", strconv.FormatInt(id, 10))
+	q.Set("after", strconv.FormatInt(after, 10))
+	u.RawQuery = q.Encode()
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, Proxy: http.ProxyFromEnvironment}
+
+	conn, response, err := dialer.DialContext(
+		ctx,
+		u.String(),
+		http.Header{"Authorization": []string{"Bearer " + token}},
+	)
+	if err != nil {
+		if response != nil {
+			response.Body.Close()
+
+			return nil, &Error{
+				StatusCode: response.StatusCode,
+				Message:    "workspace connection failed: " + response.Status,
+			}
+		}
+
+		return nil, err
+	}
+
+	conn.SetReadLimit(64 << 10)
+	conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+	conn.SetPingHandler(func(data string) error {
+		conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+		return conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(10*time.Second))
+	})
+
+	if ctx.Err() != nil {
+		conn.Close()
+		return nil, ctx.Err()
+	}
+
+	return &WorkspaceStream{conn: conn, stopWatch: context.AfterFunc(ctx, func() { conn.Close() })}, nil
+}
+
+func (s *WorkspaceStream) Read() (StreamFrame, error) {
+	var frame StreamFrame
+
+	err := s.conn.ReadJSON(&frame)
+
+	return frame, err
+}
+
+func (s *WorkspaceStream) Close() {
+	if s != nil {
+		s.stopWatch()
+		s.conn.Close()
+	}
+}

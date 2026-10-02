@@ -1,0 +1,199 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+)
+
+func (m model) View() tea.View {
+	if !m.demo {
+		if m.token != "" {
+			return m.postsView()
+		}
+
+		return m.authView()
+	}
+
+	s := fmt.Sprintf("Maruvo\n\nConnection demo\nAPI: %s\nMessage: %s\n\n", m.client.URL(), m.message)
+	switch {
+	case m.loggingIn:
+		s += "Finish Google sign-in in your browser.\nWaiting for the login response...\n"
+	case m.loading:
+		s += "Sending to Rust through the Go API...\n"
+	case m.err != nil:
+		s += fmt.Sprintf("Connection failed: %v\nStart make rust and make api, then retry.\n", m.err)
+	default:
+		s += fmt.Sprintf("Connected to %s\n%s\n", m.response.Service, m.response.Message)
+	}
+
+	s += "\nEnter / r: send again    q: quit\n"
+	view := tea.NewView(s)
+	view.AltScreen = true
+
+	return view
+}
+
+func (m model) authView() tea.View {
+	rows := []string{
+		"",
+		"",
+		bold("A place to find work. A place to post it."),
+		"",
+		muted("Sign in with Google to get started."),
+	}
+	footer := "Enter  sign in    r  retry session    q  quit"
+
+	switch {
+	case m.loggingIn:
+		rows = []string{
+			"",
+			"",
+			bold("Continue in your browser."),
+			"",
+			muted("Waiting for Google sign-in to finish..."),
+		}
+		footer = "q  quit login"
+	case m.loading:
+		rows = []string{"", "", muted("Checking your saved session...")}
+	}
+
+	return m.frame(rows, footer)
+}
+
+func (m model) frame(body []string, footer string) tea.View {
+	width, height := m.dimensions()
+	if width < 48 || height < 16 {
+		view := tea.NewView(
+			"Maruvo\n\nResize the terminal to at least 48 columns × 16 rows.\nCtrl+c to quit.",
+		)
+		view.AltScreen = true
+
+		return view
+	}
+
+	inner := width - 4
+	header := accent("MARUVO")
+
+	identity := "Task exchange"
+	if m.profile != "" && m.profile != "default" {
+		identity = "Profile: " + m.profile
+	}
+
+	if m.token != "" {
+		identity = m.profileLabel()
+	}
+
+	identity = ansi.Truncate(identity, max(8, inner/2), "…")
+
+	label := muted(identity)
+	if m.profileOpen {
+		label = accent(identity)
+	}
+
+	header += strings.Repeat(" ", max(1, inner-ansi.StringWidth(header)-ansi.StringWidth(identity))) + label
+	tabs := muted("Welcome")
+
+	if m.token != "" {
+		names := append([]string(nil), tabNames...)
+
+		active := int(m.screen)
+		if m.screen == detailScreen || m.screen == workspaceScreen {
+			active = 0
+			if m.own {
+				active = 1
+			}
+		}
+
+		for i := range names {
+			if i == active {
+				names[i] = accent(names[i])
+			} else {
+				names[i] = muted(names[i])
+			}
+		}
+
+		tabs = strings.Join(names, "    ")
+	}
+
+	divider := muted(strings.Repeat("─", inner))
+
+	lines := []string{"", "  " + header, "", "  " + tabs, "  " + divider, ""}
+	if m.screen == workspaceScreen {
+		lines = []string{"", "  " + header, "  " + divider, ""}
+	}
+
+	for i := 0; i < m.bodyHeight(); i++ {
+		line := ""
+		if !m.picker.open && i < len(body) {
+			line = ansi.Truncate(body[i], m.contentWidth(), "…")
+		}
+
+		lines = append(lines, strings.Repeat(" ", m.contentX())+line)
+	}
+
+	if m.picker.open {
+		footer = muted("Arrows select   PgUp/PgDn month   Tab time   Enter apply   Esc cancel")
+		if width < 78 {
+			footer = muted("Arrows · Tab time · Enter apply · Esc cancel")
+		}
+	} else if m.profileOpen {
+		footer = muted("Click Log out / Enter   Esc close profile")
+	} else if m.err != nil {
+		footer = warning(plain(m.err.Error()))
+	} else if m.notice != "" {
+		footer = accent(m.notice) + "   " + muted(footer)
+	} else {
+		footer = muted(footer)
+	}
+
+	lines = append(lines, "", "  "+divider, "  "+ansi.Truncate(footer, inner, "…"), "")
+	if m.profileOpen && m.token != "" {
+		m.drawProfile(lines)
+	}
+
+	if m.picker.open && m.token != "" {
+		m.drawDeadline(lines)
+	}
+
+	view := tea.NewView(strings.Join(lines, "\n"))
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
+
+	return view
+}
+
+func (m model) dimensions() (int, int) {
+	width, height := m.width, m.height
+	if width == 0 {
+		width = 80
+	}
+
+	if height == 0 {
+		height = 24
+	}
+
+	return width, height
+}
+
+func plain(text string) string {
+	return strings.Join(strings.Fields(ansi.Strip(text)), " ")
+}
+
+func bold(text string) string {
+	return "\x1b[1m" + text + "\x1b[0m"
+}
+
+func accent(text string) string {
+	return "\x1b[1;36m" + text + "\x1b[0m"
+}
+
+func muted(text string) string {
+	return "\x1b[2m" + text + "\x1b[0m"
+}
+
+func warning(text string) string {
+	return "\x1b[31m" + text + "\x1b[0m"
+}

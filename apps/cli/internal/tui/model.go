@@ -1,0 +1,96 @@
+package tui
+
+import (
+	"context"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/rajandhamala/Maruvo/cli/internal/api"
+)
+
+type screen int
+
+const (
+	feedScreen screen = iota
+	myPostsScreen
+	newPostScreen
+	detailScreen
+	workspaceScreen
+)
+
+var levels = []string{"easy", "medium", "complex"}
+var statuses = []string{"open", "negotiating", "in_progress", "completed", "cancelled"}
+
+type model struct {
+	ctx                    context.Context
+	client                 *api.Client
+	profile                string
+	message                string
+	loading                bool
+	response               api.DemoResponse
+	err                    error
+	demo                   bool
+	user                   api.User
+	token                  string
+	loggingIn              bool
+	profileOpen            bool
+	walletAddress          string
+	escrow                 api.Escrow
+	fundingConfirm         bool
+	width                  int
+	height                 int
+	screen                 screen
+	posts                  []api.Post
+	selected               int
+	level                  int
+	own                    bool
+	form                   postForm
+	picker                 deadlinePicker
+	notice                 string
+	deleting               bool
+	editingStatus          bool
+	statusChoice           int
+	scroll                 int
+	workspace              api.Workspace
+	workspaceGen           uint64
+	workspaceCtx           context.Context
+	workspaceCancel        context.CancelFunc
+	stream                 *api.WorkspaceStream
+	live                   string
+	workspaceAction        string
+	workspacePendingAction string
+	workspaceInput         textField
+	composer               chatComposer
+	workspaceFiles         bool
+	fileSelection          int
+	activityScroll         int
+	workspaceReview        bool
+	reviewPlan             api.SettlementPlan
+	reviewConfirm          bool
+	reviewVersion          int64
+}
+
+func Run(ctx context.Context, client *api.Client, message string, demo bool, profile string) error {
+	final, err := tea.NewProgram(model{
+		ctx:     ctx,
+		client:  client,
+		profile: profile,
+		message: message,
+		loading: true,
+		demo:    demo,
+		width:   80,
+		height:  24,
+	}).Run()
+	if m, ok := final.(model); ok {
+		m.stopWorkspace()
+	}
+
+	return err
+}
+
+func (m model) Init() tea.Cmd {
+	if m.demo {
+		return m.sendDemo()
+	}
+
+	return m.restoreSession()
+}

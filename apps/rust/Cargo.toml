@@ -8,6 +8,21 @@ prost = "0.14"
 tokio = { version = "1.53.1", features = ["full"] }
 tonic = "0.14"
 tonic-prost = "0.14"
+anchor-lang = "=0.32.1"
+base64 = "0.22"
+bincode = "1.3"
+dotenvy = "0.15"
+maruvo-escrow = { path = "../solana/programs/maruvo-escrow", features = ["no-entrypoint"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+solana-message = "=2.4.0"
+solana-hash = "=2.3.0"
+solana-signature = "=2.3.0"
+solana-transaction = { version = "=2.2.3", features = ["bincode", "verify"] }
+
+[profile.dev]
+debug = 0
+incremental = false
 
 [build-dependencies]
 tonic-prost-build = "0.14"
