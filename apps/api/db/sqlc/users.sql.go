@@ -7,52 +7,138 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createUser = `-- name: CreateUser :one
-
-INSERT INTO users (email)
-VALUES ($1)
-RETURNING id, email, created_at
+const checkIfUserExist = `-- name: CheckIfUserExist :one
+SELECT id, email, google_id, username, avatar, created_at FROM users WHERE google_id=$1
 `
 
-// db/queries/users.sql
-func (q *Queries) CreateUser(ctx context.Context, email string) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, email)
+func (q *Queries) CheckIfUserExist(ctx context.Context, googleID pgtype.Text) (User, error) {
+	row := q.db.QueryRow(ctx, checkIfUserExist, googleID)
 	var i User
-	err := row.Scan(&i.ID, &i.Email, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.GoogleID,
+		&i.Username,
+		&i.Avatar,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
-const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, created_at
-FROM users
-WHERE id = $1
+const createPost = `-- name: CreatePost :one
+INSERT INTO posts (user_id,title,cost_lamports,end_time,status,level,description,acceptance_criteria,input_files,expected_outputs)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs
 `
 
-func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
-	row := q.db.QueryRow(ctx, getUserByID, id)
-	var i User
-	err := row.Scan(&i.ID, &i.Email, &i.CreatedAt)
+type CreatePostParams struct {
+	UserID             int64              `json:"user_id"`
+	Title              string             `json:"title"`
+	CostLamports       int64              `json:"cost_lamports"`
+	EndTime            pgtype.Timestamptz `json:"end_time"`
+	Status             PostStatus         `json:"status"`
+	Level              PostLevel          `json:"level"`
+	Description        string             `json:"description"`
+	AcceptanceCriteria string             `json:"acceptance_criteria"`
+	InputFiles         []string           `json:"input_files"`
+	ExpectedOutputs    []string           `json:"expected_outputs"`
+}
+
+func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (Post, error) {
+	row := q.db.QueryRow(ctx, createPost,
+		arg.UserID,
+		arg.Title,
+		arg.CostLamports,
+		arg.EndTime,
+		arg.Status,
+		arg.Level,
+		arg.Description,
+		arg.AcceptanceCriteria,
+		arg.InputFiles,
+		arg.ExpectedOutputs,
+	)
+	var i Post
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.CostLamports,
+		&i.EndTime,
+		&i.Status,
+		&i.Level,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AcceptedBy,
+		&i.AcceptedAt,
+		&i.PosterWallet,
+		&i.WorkerWallet,
+		&i.Description,
+		&i.AcceptanceCriteria,
+		&i.InputFiles,
+		&i.ExpectedOutputs,
+	)
 	return i, err
 }
 
-const listUsers = `-- name: ListUsers :many
-SELECT id, email, created_at
-FROM users
-ORDER BY id
+const deleteYourPost = `-- name: DeleteYourPost :execrows
+DELETE from posts WHERE user_id=$1 AND id =$2 AND accepted_by IS NULL
 `
 
-func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := q.db.Query(ctx, listUsers)
+type DeleteYourPostParams struct {
+	UserID int64 `json:"user_id"`
+	ID     int64 `json:"id"`
+}
+
+func (q *Queries) DeleteYourPost(ctx context.Context, arg DeleteYourPostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteYourPost, arg.UserID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const fetchPostByLevel = `-- name: FetchPostByLevel :many
+SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs from posts WHERE level=$1 AND user_id<>$2 AND status='open'
+    AND accepted_by IS NULL AND end_time > NOW() ORDER BY created_at DESC
+`
+
+type FetchPostByLevelParams struct {
+	Level  PostLevel `json:"level"`
+	UserID int64     `json:"user_id"`
+}
+
+func (q *Queries) FetchPostByLevel(ctx context.Context, arg FetchPostByLevelParams) ([]Post, error) {
+	rows, err := q.db.Query(ctx, fetchPostByLevel, arg.Level, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []User
+	var items []Post
 	for rows.Next() {
-		var i User
-		if err := rows.Scan(&i.ID, &i.Email, &i.CreatedAt); err != nil {
+		var i Post
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Title,
+			&i.CostLamports,
+			&i.EndTime,
+			&i.Status,
+			&i.Level,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AcceptedBy,
+			&i.AcceptedAt,
+			&i.PosterWallet,
+			&i.WorkerWallet,
+			&i.Description,
+			&i.AcceptanceCriteria,
+			&i.InputFiles,
+			&i.ExpectedOutputs,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -61,4 +147,117 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const getUrPosts = `-- name: GetUrPosts :many
+SELECT posts.id, posts.user_id, posts.title, posts.cost_lamports, posts.end_time, posts.status, posts.level, posts.created_at, posts.updated_at, posts.accepted_by, posts.accepted_at, posts.poster_wallet, posts.worker_wallet, posts.description, posts.acceptance_criteria, posts.input_files, posts.expected_outputs from posts WHERE posts.user_id=$1 OR posts.accepted_by=$1
+    OR EXISTS(SELECT 1 FROM post_escrows e JOIN wallets w ON w.address = e.reviewer
+        WHERE e.post_id = posts.id AND w.user_id = $1)
+ORDER BY created_at DESC
+`
+
+func (q *Queries) GetUrPosts(ctx context.Context, userID int64) ([]Post, error) {
+	rows, err := q.db.Query(ctx, getUrPosts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Post
+	for rows.Next() {
+		var i Post
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Title,
+			&i.CostLamports,
+			&i.EndTime,
+			&i.Status,
+			&i.Level,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AcceptedBy,
+			&i.AcceptedAt,
+			&i.PosterWallet,
+			&i.WorkerWallet,
+			&i.Description,
+			&i.AcceptanceCriteria,
+			&i.InputFiles,
+			&i.ExpectedOutputs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const registerUser = `-- name: RegisterUser :one
+
+INSERT INTO users (email,google_id,username,avatar)
+VALUES ($1, $2, $3, $4)RETURNING id, email, google_id, username, avatar, created_at
+`
+
+type RegisterUserParams struct {
+	Email    string      `json:"email"`
+	GoogleID pgtype.Text `json:"google_id"`
+	Username string      `json:"username"`
+	Avatar   pgtype.Text `json:"avatar"`
+}
+
+// db/queries/users.sql
+func (q *Queries) RegisterUser(ctx context.Context, arg RegisterUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, registerUser,
+		arg.Email,
+		arg.GoogleID,
+		arg.Username,
+		arg.Avatar,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.GoogleID,
+		&i.Username,
+		&i.Avatar,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updatePostStatus = `-- name: UpdatePostStatus :one
+UPDATE posts SET status=$1,updated_at=NOW() WHERE id=$2 AND user_id=$3 AND accepted_by IS NULL RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs
+`
+
+type UpdatePostStatusParams struct {
+	Status PostStatus `json:"status"`
+	ID     int64      `json:"id"`
+	UserID int64      `json:"user_id"`
+}
+
+func (q *Queries) UpdatePostStatus(ctx context.Context, arg UpdatePostStatusParams) (Post, error) {
+	row := q.db.QueryRow(ctx, updatePostStatus, arg.Status, arg.ID, arg.UserID)
+	var i Post
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Title,
+		&i.CostLamports,
+		&i.EndTime,
+		&i.Status,
+		&i.Level,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AcceptedBy,
+		&i.AcceptedAt,
+		&i.PosterWallet,
+		&i.WorkerWallet,
+		&i.Description,
+		&i.AcceptanceCriteria,
+		&i.InputFiles,
+		&i.ExpectedOutputs,
+	)
+	return i, err
 }

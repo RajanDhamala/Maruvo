@@ -9,3 +9,9 @@ sql:
         package: "db"
         out: "db/sqlc"
         sql_package: "pgx/v5"
+        emit_json_tags: true
+        overrides:
+          - db_type: "jsonb"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"

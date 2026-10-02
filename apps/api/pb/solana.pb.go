@@ -21,6 +21,646 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type PrepareSettlementRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Escrow        *CheckEscrowRequest    `protobuf:"bytes,1,opt,name=escrow,proto3" json:"escrow,omitempty"`
+	Action        string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrepareSettlementRequest) Reset() {
+	*x = PrepareSettlementRequest{}
+	mi := &file_solana_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrepareSettlementRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrepareSettlementRequest) ProtoMessage() {}
+
+func (x *PrepareSettlementRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrepareSettlementRequest.ProtoReflect.Descriptor instead.
+func (*PrepareSettlementRequest) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *PrepareSettlementRequest) GetEscrow() *CheckEscrowRequest {
+	if x != nil {
+		return x.Escrow
+	}
+	return nil
+}
+
+func (x *PrepareSettlementRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+type PreparedSettlement struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Transaction          string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
+	LastValidBlockHeight uint64                 `protobuf:"varint,2,opt,name=last_valid_block_height,json=lastValidBlockHeight,proto3" json:"last_valid_block_height,omitempty"`
+	FeeLamports          uint64                 `protobuf:"varint,3,opt,name=fee_lamports,json=feeLamports,proto3" json:"fee_lamports,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *PreparedSettlement) Reset() {
+	*x = PreparedSettlement{}
+	mi := &file_solana_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreparedSettlement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreparedSettlement) ProtoMessage() {}
+
+func (x *PreparedSettlement) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreparedSettlement.ProtoReflect.Descriptor instead.
+func (*PreparedSettlement) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *PreparedSettlement) GetTransaction() string {
+	if x != nil {
+		return x.Transaction
+	}
+	return ""
+}
+
+func (x *PreparedSettlement) GetLastValidBlockHeight() uint64 {
+	if x != nil {
+		return x.LastValidBlockHeight
+	}
+	return 0
+}
+
+func (x *PreparedSettlement) GetFeeLamports() uint64 {
+	if x != nil {
+		return x.FeeLamports
+	}
+	return 0
+}
+
+type CheckSettlementRequest struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Escrow               *CheckEscrowRequest    `protobuf:"bytes,1,opt,name=escrow,proto3" json:"escrow,omitempty"`
+	Action               string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	Signature            string                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	LastValidBlockHeight uint64                 `protobuf:"varint,4,opt,name=last_valid_block_height,json=lastValidBlockHeight,proto3" json:"last_valid_block_height,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *CheckSettlementRequest) Reset() {
+	*x = CheckSettlementRequest{}
+	mi := &file_solana_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckSettlementRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckSettlementRequest) ProtoMessage() {}
+
+func (x *CheckSettlementRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckSettlementRequest.ProtoReflect.Descriptor instead.
+func (*CheckSettlementRequest) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CheckSettlementRequest) GetEscrow() *CheckEscrowRequest {
+	if x != nil {
+		return x.Escrow
+	}
+	return nil
+}
+
+func (x *CheckSettlementRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *CheckSettlementRequest) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+func (x *CheckSettlementRequest) GetLastValidBlockHeight() uint64 {
+	if x != nil {
+		return x.LastValidBlockHeight
+	}
+	return 0
+}
+
+type SettlementState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	EscrowState   string                 `protobuf:"bytes,2,opt,name=escrow_state,json=escrowState,proto3" json:"escrow_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SettlementState) Reset() {
+	*x = SettlementState{}
+	mi := &file_solana_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SettlementState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SettlementState) ProtoMessage() {}
+
+func (x *SettlementState) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SettlementState.ProtoReflect.Descriptor instead.
+func (*SettlementState) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SettlementState) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *SettlementState) GetEscrowState() string {
+	if x != nil {
+		return x.EscrowState
+	}
+	return ""
+}
+
+type PrepareEscrowRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PostId        uint64                 `protobuf:"varint,1,opt,name=post_id,json=postId,proto3" json:"post_id,omitempty"`
+	Lamports      uint64                 `protobuf:"varint,2,opt,name=lamports,proto3" json:"lamports,omitempty"`
+	Poster        string                 `protobuf:"bytes,3,opt,name=poster,proto3" json:"poster,omitempty"`
+	Worker        string                 `protobuf:"bytes,4,opt,name=worker,proto3" json:"worker,omitempty"`
+	AgreementHash []byte                 `protobuf:"bytes,5,opt,name=agreement_hash,json=agreementHash,proto3" json:"agreement_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrepareEscrowRequest) Reset() {
+	*x = PrepareEscrowRequest{}
+	mi := &file_solana_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrepareEscrowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrepareEscrowRequest) ProtoMessage() {}
+
+func (x *PrepareEscrowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrepareEscrowRequest.ProtoReflect.Descriptor instead.
+func (*PrepareEscrowRequest) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PrepareEscrowRequest) GetPostId() uint64 {
+	if x != nil {
+		return x.PostId
+	}
+	return 0
+}
+
+func (x *PrepareEscrowRequest) GetLamports() uint64 {
+	if x != nil {
+		return x.Lamports
+	}
+	return 0
+}
+
+func (x *PrepareEscrowRequest) GetPoster() string {
+	if x != nil {
+		return x.Poster
+	}
+	return ""
+}
+
+func (x *PrepareEscrowRequest) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+func (x *PrepareEscrowRequest) GetAgreementHash() []byte {
+	if x != nil {
+		return x.AgreementHash
+	}
+	return nil
+}
+
+type PreparedEscrow struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Transaction          string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
+	Address              string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	ProgramId            string                 `protobuf:"bytes,3,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Reviewer             string                 `protobuf:"bytes,4,opt,name=reviewer,proto3" json:"reviewer,omitempty"`
+	Network              string                 `protobuf:"bytes,5,opt,name=network,proto3" json:"network,omitempty"`
+	LastValidBlockHeight uint64                 `protobuf:"varint,6,opt,name=last_valid_block_height,json=lastValidBlockHeight,proto3" json:"last_valid_block_height,omitempty"`
+	FeeLamports          uint64                 `protobuf:"varint,7,opt,name=fee_lamports,json=feeLamports,proto3" json:"fee_lamports,omitempty"`
+	StorageLamports      uint64                 `protobuf:"varint,8,opt,name=storage_lamports,json=storageLamports,proto3" json:"storage_lamports,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *PreparedEscrow) Reset() {
+	*x = PreparedEscrow{}
+	mi := &file_solana_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreparedEscrow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreparedEscrow) ProtoMessage() {}
+
+func (x *PreparedEscrow) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreparedEscrow.ProtoReflect.Descriptor instead.
+func (*PreparedEscrow) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *PreparedEscrow) GetTransaction() string {
+	if x != nil {
+		return x.Transaction
+	}
+	return ""
+}
+
+func (x *PreparedEscrow) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *PreparedEscrow) GetProgramId() string {
+	if x != nil {
+		return x.ProgramId
+	}
+	return ""
+}
+
+func (x *PreparedEscrow) GetReviewer() string {
+	if x != nil {
+		return x.Reviewer
+	}
+	return ""
+}
+
+func (x *PreparedEscrow) GetNetwork() string {
+	if x != nil {
+		return x.Network
+	}
+	return ""
+}
+
+func (x *PreparedEscrow) GetLastValidBlockHeight() uint64 {
+	if x != nil {
+		return x.LastValidBlockHeight
+	}
+	return 0
+}
+
+func (x *PreparedEscrow) GetFeeLamports() uint64 {
+	if x != nil {
+		return x.FeeLamports
+	}
+	return 0
+}
+
+func (x *PreparedEscrow) GetStorageLamports() uint64 {
+	if x != nil {
+		return x.StorageLamports
+	}
+	return 0
+}
+
+type SubmitEscrowRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Transaction       string                 `protobuf:"bytes,1,opt,name=transaction,proto3" json:"transaction,omitempty"`
+	SignedTransaction string                 `protobuf:"bytes,2,opt,name=signed_transaction,json=signedTransaction,proto3" json:"signed_transaction,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *SubmitEscrowRequest) Reset() {
+	*x = SubmitEscrowRequest{}
+	mi := &file_solana_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitEscrowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitEscrowRequest) ProtoMessage() {}
+
+func (x *SubmitEscrowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitEscrowRequest.ProtoReflect.Descriptor instead.
+func (*SubmitEscrowRequest) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SubmitEscrowRequest) GetTransaction() string {
+	if x != nil {
+		return x.Transaction
+	}
+	return ""
+}
+
+func (x *SubmitEscrowRequest) GetSignedTransaction() string {
+	if x != nil {
+		return x.SignedTransaction
+	}
+	return ""
+}
+
+type SubmittedEscrow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Signature     string                 `protobuf:"bytes,1,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmittedEscrow) Reset() {
+	*x = SubmittedEscrow{}
+	mi := &file_solana_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmittedEscrow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmittedEscrow) ProtoMessage() {}
+
+func (x *SubmittedEscrow) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmittedEscrow.ProtoReflect.Descriptor instead.
+func (*SubmittedEscrow) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SubmittedEscrow) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+type CheckEscrowRequest struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Agreement            *PrepareEscrowRequest  `protobuf:"bytes,1,opt,name=agreement,proto3" json:"agreement,omitempty"`
+	Address              string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	Signature            string                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	LastValidBlockHeight uint64                 `protobuf:"varint,4,opt,name=last_valid_block_height,json=lastValidBlockHeight,proto3" json:"last_valid_block_height,omitempty"`
+	ProgramId            string                 `protobuf:"bytes,5,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Reviewer             string                 `protobuf:"bytes,6,opt,name=reviewer,proto3" json:"reviewer,omitempty"`
+	Network              string                 `protobuf:"bytes,7,opt,name=network,proto3" json:"network,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *CheckEscrowRequest) Reset() {
+	*x = CheckEscrowRequest{}
+	mi := &file_solana_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckEscrowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckEscrowRequest) ProtoMessage() {}
+
+func (x *CheckEscrowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckEscrowRequest.ProtoReflect.Descriptor instead.
+func (*CheckEscrowRequest) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CheckEscrowRequest) GetAgreement() *PrepareEscrowRequest {
+	if x != nil {
+		return x.Agreement
+	}
+	return nil
+}
+
+func (x *CheckEscrowRequest) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *CheckEscrowRequest) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+func (x *CheckEscrowRequest) GetLastValidBlockHeight() uint64 {
+	if x != nil {
+		return x.LastValidBlockHeight
+	}
+	return 0
+}
+
+func (x *CheckEscrowRequest) GetProgramId() string {
+	if x != nil {
+		return x.ProgramId
+	}
+	return ""
+}
+
+func (x *CheckEscrowRequest) GetReviewer() string {
+	if x != nil {
+		return x.Reviewer
+	}
+	return ""
+}
+
+func (x *CheckEscrowRequest) GetNetwork() string {
+	if x != nil {
+		return x.Network
+	}
+	return ""
+}
+
+type EscrowState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EscrowState) Reset() {
+	*x = EscrowState{}
+	mi := &file_solana_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EscrowState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EscrowState) ProtoMessage() {}
+
+func (x *EscrowState) ProtoReflect() protoreflect.Message {
+	mi := &file_solana_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EscrowState.ProtoReflect.Descriptor instead.
+func (*EscrowState) Descriptor() ([]byte, []int) {
+	return file_solana_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *EscrowState) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
 type HealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -29,7 +669,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_solana_proto_msgTypes[0]
+	mi := &file_solana_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -41,7 +681,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_solana_proto_msgTypes[0]
+	mi := &file_solana_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -54,7 +694,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_solana_proto_rawDescGZIP(), []int{0}
+	return file_solana_proto_rawDescGZIP(), []int{10}
 }
 
 type HealthResponse struct {
@@ -66,7 +706,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_solana_proto_msgTypes[1]
+	mi := &file_solana_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -78,7 +718,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_solana_proto_msgTypes[1]
+	mi := &file_solana_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -91,7 +731,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_solana_proto_rawDescGZIP(), []int{1}
+	return file_solana_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *HealthResponse) GetMessage() string {
@@ -110,7 +750,7 @@ type DemoRequest struct {
 
 func (x *DemoRequest) Reset() {
 	*x = DemoRequest{}
-	mi := &file_solana_proto_msgTypes[2]
+	mi := &file_solana_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -122,7 +762,7 @@ func (x *DemoRequest) String() string {
 func (*DemoRequest) ProtoMessage() {}
 
 func (x *DemoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_solana_proto_msgTypes[2]
+	mi := &file_solana_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -135,7 +775,7 @@ func (x *DemoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DemoRequest.ProtoReflect.Descriptor instead.
 func (*DemoRequest) Descriptor() ([]byte, []int) {
-	return file_solana_proto_rawDescGZIP(), []int{2}
+	return file_solana_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DemoRequest) GetMessage() string {
@@ -155,7 +795,7 @@ type DemoResponse struct {
 
 func (x *DemoResponse) Reset() {
 	*x = DemoResponse{}
-	mi := &file_solana_proto_msgTypes[3]
+	mi := &file_solana_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -167,7 +807,7 @@ func (x *DemoResponse) String() string {
 func (*DemoResponse) ProtoMessage() {}
 
 func (x *DemoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_solana_proto_msgTypes[3]
+	mi := &file_solana_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -180,7 +820,7 @@ func (x *DemoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DemoResponse.ProtoReflect.Descriptor instead.
 func (*DemoResponse) Descriptor() ([]byte, []int) {
-	return file_solana_proto_rawDescGZIP(), []int{3}
+	return file_solana_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DemoResponse) GetMessage() string {
@@ -201,7 +841,54 @@ var File_solana_proto protoreflect.FileDescriptor
 
 const file_solana_proto_rawDesc = "" +
 	"\n" +
-	"\fsolana.proto\x12\x06maruvo\"\x0f\n" +
+	"\fsolana.proto\x12\x06maruvo\"f\n" +
+	"\x18PrepareSettlementRequest\x122\n" +
+	"\x06escrow\x18\x01 \x01(\v2\x1a.maruvo.CheckEscrowRequestR\x06escrow\x12\x16\n" +
+	"\x06action\x18\x02 \x01(\tR\x06action\"\x90\x01\n" +
+	"\x12PreparedSettlement\x12 \n" +
+	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x125\n" +
+	"\x17last_valid_block_height\x18\x02 \x01(\x04R\x14lastValidBlockHeight\x12!\n" +
+	"\ffee_lamports\x18\x03 \x01(\x04R\vfeeLamports\"\xb9\x01\n" +
+	"\x16CheckSettlementRequest\x122\n" +
+	"\x06escrow\x18\x01 \x01(\v2\x1a.maruvo.CheckEscrowRequestR\x06escrow\x12\x16\n" +
+	"\x06action\x18\x02 \x01(\tR\x06action\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\tR\tsignature\x125\n" +
+	"\x17last_valid_block_height\x18\x04 \x01(\x04R\x14lastValidBlockHeight\"J\n" +
+	"\x0fSettlementState\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\x12!\n" +
+	"\fescrow_state\x18\x02 \x01(\tR\vescrowState\"\xa2\x01\n" +
+	"\x14PrepareEscrowRequest\x12\x17\n" +
+	"\apost_id\x18\x01 \x01(\x04R\x06postId\x12\x1a\n" +
+	"\blamports\x18\x02 \x01(\x04R\blamports\x12\x16\n" +
+	"\x06poster\x18\x03 \x01(\tR\x06poster\x12\x16\n" +
+	"\x06worker\x18\x04 \x01(\tR\x06worker\x12%\n" +
+	"\x0eagreement_hash\x18\x05 \x01(\fR\ragreementHash\"\xa6\x02\n" +
+	"\x0ePreparedEscrow\x12 \n" +
+	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12\x18\n" +
+	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1d\n" +
+	"\n" +
+	"program_id\x18\x03 \x01(\tR\tprogramId\x12\x1a\n" +
+	"\breviewer\x18\x04 \x01(\tR\breviewer\x12\x18\n" +
+	"\anetwork\x18\x05 \x01(\tR\anetwork\x125\n" +
+	"\x17last_valid_block_height\x18\x06 \x01(\x04R\x14lastValidBlockHeight\x12!\n" +
+	"\ffee_lamports\x18\a \x01(\x04R\vfeeLamports\x12)\n" +
+	"\x10storage_lamports\x18\b \x01(\x04R\x0fstorageLamports\"f\n" +
+	"\x13SubmitEscrowRequest\x12 \n" +
+	"\vtransaction\x18\x01 \x01(\tR\vtransaction\x12-\n" +
+	"\x12signed_transaction\x18\x02 \x01(\tR\x11signedTransaction\"/\n" +
+	"\x0fSubmittedEscrow\x12\x1c\n" +
+	"\tsignature\x18\x01 \x01(\tR\tsignature\"\x94\x02\n" +
+	"\x12CheckEscrowRequest\x12:\n" +
+	"\tagreement\x18\x01 \x01(\v2\x1c.maruvo.PrepareEscrowRequestR\tagreement\x12\x18\n" +
+	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\tR\tsignature\x125\n" +
+	"\x17last_valid_block_height\x18\x04 \x01(\x04R\x14lastValidBlockHeight\x12\x1d\n" +
+	"\n" +
+	"program_id\x18\x05 \x01(\tR\tprogramId\x12\x1a\n" +
+	"\breviewer\x18\x06 \x01(\tR\breviewer\x12\x18\n" +
+	"\anetwork\x18\a \x01(\tR\anetwork\"#\n" +
+	"\vEscrowState\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\"\x0f\n" +
 	"\rHealthRequest\"*\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"'\n" +
@@ -209,10 +896,15 @@ const file_solana_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"B\n" +
 	"\fDemoResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x18\n" +
-	"\aservice\x18\x02 \x01(\tR\aservice2{\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice2\xe7\x03\n" +
 	"\rSolanaService\x127\n" +
 	"\x06Health\x12\x15.maruvo.HealthRequest\x1a\x16.maruvo.HealthResponse\x121\n" +
-	"\x04Demo\x12\x13.maruvo.DemoRequest\x1a\x14.maruvo.DemoResponseB&Z$github.com/rajandhamala/Maruvo/pb;pbb\x06proto3"
+	"\x04Demo\x12\x13.maruvo.DemoRequest\x1a\x14.maruvo.DemoResponse\x12E\n" +
+	"\rPrepareEscrow\x12\x1c.maruvo.PrepareEscrowRequest\x1a\x16.maruvo.PreparedEscrow\x12D\n" +
+	"\fSubmitEscrow\x12\x1b.maruvo.SubmitEscrowRequest\x1a\x17.maruvo.SubmittedEscrow\x12>\n" +
+	"\vCheckEscrow\x12\x1a.maruvo.CheckEscrowRequest\x1a\x13.maruvo.EscrowState\x12Q\n" +
+	"\x11PrepareSettlement\x12 .maruvo.PrepareSettlementRequest\x1a\x1a.maruvo.PreparedSettlement\x12J\n" +
+	"\x0fCheckSettlement\x12\x1e.maruvo.CheckSettlementRequest\x1a\x17.maruvo.SettlementStateB&Z$github.com/rajandhamala/Maruvo/pb;pbb\x06proto3"
 
 var (
 	file_solana_proto_rawDescOnce sync.Once
@@ -226,23 +918,46 @@ func file_solana_proto_rawDescGZIP() []byte {
 	return file_solana_proto_rawDescData
 }
 
-var file_solana_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_solana_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_solana_proto_goTypes = []any{
-	(*HealthRequest)(nil),  // 0: maruvo.HealthRequest
-	(*HealthResponse)(nil), // 1: maruvo.HealthResponse
-	(*DemoRequest)(nil),    // 2: maruvo.DemoRequest
-	(*DemoResponse)(nil),   // 3: maruvo.DemoResponse
+	(*PrepareSettlementRequest)(nil), // 0: maruvo.PrepareSettlementRequest
+	(*PreparedSettlement)(nil),       // 1: maruvo.PreparedSettlement
+	(*CheckSettlementRequest)(nil),   // 2: maruvo.CheckSettlementRequest
+	(*SettlementState)(nil),          // 3: maruvo.SettlementState
+	(*PrepareEscrowRequest)(nil),     // 4: maruvo.PrepareEscrowRequest
+	(*PreparedEscrow)(nil),           // 5: maruvo.PreparedEscrow
+	(*SubmitEscrowRequest)(nil),      // 6: maruvo.SubmitEscrowRequest
+	(*SubmittedEscrow)(nil),          // 7: maruvo.SubmittedEscrow
+	(*CheckEscrowRequest)(nil),       // 8: maruvo.CheckEscrowRequest
+	(*EscrowState)(nil),              // 9: maruvo.EscrowState
+	(*HealthRequest)(nil),            // 10: maruvo.HealthRequest
+	(*HealthResponse)(nil),           // 11: maruvo.HealthResponse
+	(*DemoRequest)(nil),              // 12: maruvo.DemoRequest
+	(*DemoResponse)(nil),             // 13: maruvo.DemoResponse
 }
 var file_solana_proto_depIdxs = []int32{
-	0, // 0: maruvo.SolanaService.Health:input_type -> maruvo.HealthRequest
-	2, // 1: maruvo.SolanaService.Demo:input_type -> maruvo.DemoRequest
-	1, // 2: maruvo.SolanaService.Health:output_type -> maruvo.HealthResponse
-	3, // 3: maruvo.SolanaService.Demo:output_type -> maruvo.DemoResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	8,  // 0: maruvo.PrepareSettlementRequest.escrow:type_name -> maruvo.CheckEscrowRequest
+	8,  // 1: maruvo.CheckSettlementRequest.escrow:type_name -> maruvo.CheckEscrowRequest
+	4,  // 2: maruvo.CheckEscrowRequest.agreement:type_name -> maruvo.PrepareEscrowRequest
+	10, // 3: maruvo.SolanaService.Health:input_type -> maruvo.HealthRequest
+	12, // 4: maruvo.SolanaService.Demo:input_type -> maruvo.DemoRequest
+	4,  // 5: maruvo.SolanaService.PrepareEscrow:input_type -> maruvo.PrepareEscrowRequest
+	6,  // 6: maruvo.SolanaService.SubmitEscrow:input_type -> maruvo.SubmitEscrowRequest
+	8,  // 7: maruvo.SolanaService.CheckEscrow:input_type -> maruvo.CheckEscrowRequest
+	0,  // 8: maruvo.SolanaService.PrepareSettlement:input_type -> maruvo.PrepareSettlementRequest
+	2,  // 9: maruvo.SolanaService.CheckSettlement:input_type -> maruvo.CheckSettlementRequest
+	11, // 10: maruvo.SolanaService.Health:output_type -> maruvo.HealthResponse
+	13, // 11: maruvo.SolanaService.Demo:output_type -> maruvo.DemoResponse
+	5,  // 12: maruvo.SolanaService.PrepareEscrow:output_type -> maruvo.PreparedEscrow
+	7,  // 13: maruvo.SolanaService.SubmitEscrow:output_type -> maruvo.SubmittedEscrow
+	9,  // 14: maruvo.SolanaService.CheckEscrow:output_type -> maruvo.EscrowState
+	1,  // 15: maruvo.SolanaService.PrepareSettlement:output_type -> maruvo.PreparedSettlement
+	3,  // 16: maruvo.SolanaService.CheckSettlement:output_type -> maruvo.SettlementState
+	10, // [10:17] is the sub-list for method output_type
+	3,  // [3:10] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_solana_proto_init() }
@@ -256,7 +971,7 @@ func file_solana_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_solana_proto_rawDesc), len(file_solana_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

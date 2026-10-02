@@ -16,6 +16,7 @@ func ConnectDb() (*pgxpool.Pool, error) {
 	if url == "" {
 		return nil, errors.New("DATABASE_URL is missing")
 	}
+
 	ctx, cancle := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancle()
 
@@ -31,5 +32,6 @@ func ConnectDb() (*pgxpool.Pool, error) {
 	}
 
 	fmt.Println("Connceted to the Databse Succesfully")
+
 	return pool, nil
 }

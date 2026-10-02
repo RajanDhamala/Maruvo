@@ -1,5 +1,4 @@
 
-// currently demo just for testing
 syntax = "proto3";
 
 package maruvo;
@@ -9,7 +8,73 @@ option go_package = "github.com/rajandhamala/Maruvo/pb;pb";
 service SolanaService {
     rpc Health (HealthRequest) returns (HealthResponse);
     rpc Demo (DemoRequest) returns (DemoResponse);
+    rpc PrepareEscrow (PrepareEscrowRequest) returns (PreparedEscrow);
+    rpc SubmitEscrow (SubmitEscrowRequest) returns (SubmittedEscrow);
+    rpc CheckEscrow (CheckEscrowRequest) returns (EscrowState);
+    rpc PrepareSettlement (PrepareSettlementRequest) returns (PreparedSettlement);
+    rpc CheckSettlement (CheckSettlementRequest) returns (SettlementState);
 }
+
+message PrepareSettlementRequest {
+    CheckEscrowRequest escrow = 1;
+    string action = 2;
+}
+
+message PreparedSettlement {
+    string transaction = 1;
+    uint64 last_valid_block_height = 2;
+    uint64 fee_lamports = 3;
+}
+
+message CheckSettlementRequest {
+    CheckEscrowRequest escrow = 1;
+    string action = 2;
+    string signature = 3;
+    uint64 last_valid_block_height = 4;
+}
+
+message SettlementState {
+    string state = 1;
+    string escrow_state = 2;
+}
+
+message PrepareEscrowRequest {
+    uint64 post_id = 1;
+    uint64 lamports = 2;
+    string poster = 3;
+    string worker = 4;
+    bytes agreement_hash = 5;
+}
+
+message PreparedEscrow {
+    string transaction = 1;
+    string address = 2;
+    string program_id = 3;
+    string reviewer = 4;
+    string network = 5;
+    uint64 last_valid_block_height = 6;
+    uint64 fee_lamports = 7;
+    uint64 storage_lamports = 8;
+}
+
+message SubmitEscrowRequest {
+    string transaction = 1;
+    string signed_transaction = 2;
+}
+
+message SubmittedEscrow { string signature = 1; }
+
+message CheckEscrowRequest {
+    PrepareEscrowRequest agreement = 1;
+    string address = 2;
+    string signature = 3;
+    uint64 last_valid_block_height = 4;
+    string program_id = 5;
+    string reviewer = 6;
+    string network = 7;
+}
+
+message EscrowState { string state = 1; }
 
 message HealthRequest {}
 

@@ -50,6 +50,7 @@ test-ledger/
 *.swo
 .DS_Store
 Thumbs.db
+.agents/
 
 # Keep dependency lockfiles and generated protobuf source in Git.
 .vs/

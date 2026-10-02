@@ -5,11 +5,201 @@
 package db
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type PostLevel string
+
+const (
+	PostLevelEasy    PostLevel = "easy"
+	PostLevelMedium  PostLevel = "medium"
+	PostLevelComplex PostLevel = "complex"
+)
+
+func (e *PostLevel) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = PostLevel(s)
+	case string:
+		*e = PostLevel(s)
+	default:
+		return fmt.Errorf("unsupported scan type for PostLevel: %T", src)
+	}
+	return nil
+}
+
+type NullPostLevel struct {
+	PostLevel PostLevel `json:"post_level"`
+	Valid     bool      `json:"valid"` // Valid is true if PostLevel is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPostLevel) Scan(value interface{}) error {
+	if value == nil {
+		ns.PostLevel, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.PostLevel.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPostLevel) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.PostLevel), nil
+}
+
+type PostStatus string
+
+const (
+	PostStatusOpen        PostStatus = "open"
+	PostStatusNegotiating PostStatus = "negotiating"
+	PostStatusInProgress  PostStatus = "in_progress"
+	PostStatusCompleted   PostStatus = "completed"
+	PostStatusCancelled   PostStatus = "cancelled"
+)
+
+func (e *PostStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = PostStatus(s)
+	case string:
+		*e = PostStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for PostStatus: %T", src)
+	}
+	return nil
+}
+
+type NullPostStatus struct {
+	PostStatus PostStatus `json:"post_status"`
+	Valid      bool       `json:"valid"` // Valid is true if PostStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullPostStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.PostStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.PostStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullPostStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.PostStatus), nil
+}
+
+type Post struct {
+	ID                 int64              `json:"id"`
+	UserID             int64              `json:"user_id"`
+	Title              string             `json:"title"`
+	CostLamports       int64              `json:"cost_lamports"`
+	EndTime            pgtype.Timestamptz `json:"end_time"`
+	Status             PostStatus         `json:"status"`
+	Level              PostLevel          `json:"level"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	AcceptedBy         pgtype.Int8        `json:"accepted_by"`
+	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
+	PosterWallet       string             `json:"poster_wallet"`
+	WorkerWallet       string             `json:"worker_wallet"`
+	Description        string             `json:"description"`
+	AcceptanceCriteria string             `json:"acceptance_criteria"`
+	InputFiles         []string           `json:"input_files"`
+	ExpectedOutputs    []string           `json:"expected_outputs"`
+}
+
+type PostEscrow struct {
+	PostID               int64              `json:"post_id"`
+	Address              string             `json:"address"`
+	ProgramID            string             `json:"program_id"`
+	Reviewer             string             `json:"reviewer"`
+	Network              string             `json:"network"`
+	Transaction          string             `json:"transaction"`
+	Signature            string             `json:"signature"`
+	LastValidBlockHeight int64              `json:"last_valid_block_height"`
+	FeeLamports          int64              `json:"fee_lamports"`
+	StorageLamports      int64              `json:"storage_lamports"`
+	State                string             `json:"state"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PostSettlement struct {
+	PostID               int64              `json:"post_id"`
+	ReviewerID           int64              `json:"reviewer_id"`
+	Action               string             `json:"action"`
+	SubmissionVersion    int64              `json:"submission_version"`
+	Note                 string             `json:"note"`
+	Transaction          string             `json:"transaction"`
+	SignedTransaction    string             `json:"signed_transaction"`
+	Signature            string             `json:"signature"`
+	LastValidBlockHeight int64              `json:"last_valid_block_height"`
+	FeeLamports          int64              `json:"fee_lamports"`
+	State                string             `json:"state"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PostWorkspace struct {
+	PostID            int64              `json:"post_id"`
+	LastEventID       int64              `json:"last_event_id"`
+	SubmittedAt       pgtype.Timestamptz `json:"submitted_at"`
+	Submission        string             `json:"submission"`
+	ReviewState       string             `json:"review_state"`
+	SubmissionVersion int64              `json:"submission_version"`
+	ReviewNote        string             `json:"review_note"`
+	DeliveryFiles     []pgtype.UUID      `json:"delivery_files"`
+}
+
 type User struct {
-	ID        int64
-	Email     string
-	CreatedAt pgtype.Timestamptz
+	ID        int64              `json:"id"`
+	Email     string             `json:"email"`
+	GoogleID  pgtype.Text        `json:"google_id"`
+	Username  string             `json:"username"`
+	Avatar    pgtype.Text        `json:"avatar"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Wallet struct {
+	UserID   int64              `json:"user_id"`
+	Address  string             `json:"address"`
+	LinkedAt pgtype.Timestamptz `json:"linked_at"`
+}
+
+type WalletChallenge struct {
+	UserID    int64              `json:"user_id"`
+	Address   string             `json:"address"`
+	Message   string             `json:"message"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+type WorkspaceEvent struct {
+	PostID    int64              `json:"post_id"`
+	ID        int64              `json:"id"`
+	ActorID   pgtype.Int8        `json:"actor_id"`
+	Kind      string             `json:"kind"`
+	Data      json.RawMessage    `json:"data"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkspaceFile struct {
+	ID         pgtype.UUID        `json:"id"`
+	PostID     int64              `json:"post_id"`
+	UploadedBy int64              `json:"uploaded_by"`
+	Name       string             `json:"name"`
+	Size       int64              `json:"size"`
+	Sha256     string             `json:"sha256"`
+	Content    []byte             `json:"content"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	Purpose    string             `json:"purpose"`
 }
