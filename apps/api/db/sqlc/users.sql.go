@@ -12,7 +12,7 @@ import (
 )
 
 const checkIfUserExist = `-- name: CheckIfUserExist :one
-SELECT id, email, google_id, username, avatar, created_at FROM users WHERE google_id=$1
+SELECT id, email, google_id, username, avatar, created_at, github_id, github_login FROM users WHERE google_id=$1
 `
 
 func (q *Queries) CheckIfUserExist(ctx context.Context, googleID pgtype.Text) (User, error) {
@@ -25,6 +25,8 @@ func (q *Queries) CheckIfUserExist(ctx context.Context, googleID pgtype.Text) (U
 		&i.Username,
 		&i.Avatar,
 		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
 	)
 	return i, err
 }
@@ -194,14 +196,98 @@ func (q *Queries) GetUrPosts(ctx context.Context, userID int64) ([]Post, error) 
 	return items, nil
 }
 
+const getUser = `-- name: GetUser :one
+SELECT id, email, google_id, username, avatar, created_at, github_id, github_login FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
+	row := q.db.QueryRow(ctx, getUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.GoogleID,
+		&i.Username,
+		&i.Avatar,
+		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
+	)
+	return i, err
+}
+
+const linkGitHub = `-- name: LinkGitHub :one
+UPDATE users SET github_id = $2, github_login = $3
+WHERE id = $1 AND (github_id IS NULL OR github_id = $2)
+RETURNING id, email, google_id, username, avatar, created_at, github_id, github_login
+`
+
+type LinkGitHubParams struct {
+	ID          int64       `json:"id"`
+	GithubID    pgtype.Text `json:"github_id"`
+	GithubLogin string      `json:"github_login"`
+}
+
+func (q *Queries) LinkGitHub(ctx context.Context, arg LinkGitHubParams) (User, error) {
+	row := q.db.QueryRow(ctx, linkGitHub, arg.ID, arg.GithubID, arg.GithubLogin)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.GoogleID,
+		&i.Username,
+		&i.Avatar,
+		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
+	)
+	return i, err
+}
+
+const publicUsers = `-- name: PublicUsers :many
+SELECT id, username, avatar, github_login FROM users WHERE id = ANY($1::bigint[])
+`
+
+type PublicUsersRow struct {
+	ID          int64       `json:"id"`
+	Username    string      `json:"username"`
+	Avatar      pgtype.Text `json:"avatar"`
+	GithubLogin string      `json:"github_login"`
+}
+
+func (q *Queries) PublicUsers(ctx context.Context, dollar_1 []int64) ([]PublicUsersRow, error) {
+	rows, err := q.db.Query(ctx, publicUsers, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PublicUsersRow
+	for rows.Next() {
+		var i PublicUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.Avatar,
+			&i.GithubLogin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const registerUser = `-- name: RegisterUser :one
 
 INSERT INTO users (email,google_id,username,avatar)
-VALUES ($1, $2, $3, $4)RETURNING id, email, google_id, username, avatar, created_at
+VALUES ($1, $2, $3, $4)RETURNING id, email, google_id, username, avatar, created_at, github_id, github_login
 `
 
 type RegisterUserParams struct {
-	Email    string      `json:"email"`
+	Email    pgtype.Text `json:"email"`
 	GoogleID pgtype.Text `json:"google_id"`
 	Username string      `json:"username"`
 	Avatar   pgtype.Text `json:"avatar"`
@@ -223,6 +309,39 @@ func (q *Queries) RegisterUser(ctx context.Context, arg RegisterUserParams) (Use
 		&i.Username,
 		&i.Avatar,
 		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
+	)
+	return i, err
+}
+
+const signInGitHub = `-- name: SignInGitHub :one
+INSERT INTO users (github_id, github_login, username, avatar)
+VALUES ($1::text, $2::text,
+    $2::text, $3::text)
+ON CONFLICT (github_id) DO UPDATE SET github_login = EXCLUDED.github_login,
+    avatar = EXCLUDED.avatar
+RETURNING id, email, google_id, username, avatar, created_at, github_id, github_login
+`
+
+type SignInGitHubParams struct {
+	GithubID    pgtype.Text `json:"github_id"`
+	GithubLogin string      `json:"github_login"`
+	Avatar      pgtype.Text `json:"avatar"`
+}
+
+func (q *Queries) SignInGitHub(ctx context.Context, arg SignInGitHubParams) (User, error) {
+	row := q.db.QueryRow(ctx, signInGitHub, arg.GithubID, arg.GithubLogin, arg.Avatar)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.GoogleID,
+		&i.Username,
+		&i.Avatar,
+		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
 	)
 	return i, err
 }

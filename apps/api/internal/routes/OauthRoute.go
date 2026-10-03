@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	controller "github.com/rajandhamala/Maruvo/internal/controllers"
-	// middleware "github.com/rajandhamala/Maruvo/internal/middlewares"
+	"github.com/rajandhamala/Maruvo/internal/middlewares"
 )
 
 func OauthRoute(app *http.ServeMux, ctrl *controller.Controller) {
@@ -14,6 +14,9 @@ func OauthRoute(app *http.ServeMux, ctrl *controller.Controller) {
 	})
 	app.HandleFunc("GET /oauth/google", ctrl.InitGoogleLogin)
 	app.HandleFunc("GET /oauth/callback/google", ctrl.GoogleCallback)
+	app.HandleFunc("GET /oauth/github", ctrl.InitGitHubLogin)
+	app.HandleFunc("GET /oauth/callback/github", ctrl.GitHubCallback)
+	app.HandleFunc("POST /oauth/github/link", middlewares.Auth(ctrl.InitGitHubLink))
 	app.HandleFunc("POST /oauth/cli/token", ctrl.ExchangeCLIToken)
 	app.HandleFunc("GET /me", ctrl.GetMe)
 }

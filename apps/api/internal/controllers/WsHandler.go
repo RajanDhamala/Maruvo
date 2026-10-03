@@ -2,14 +2,17 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5"
 	db "github.com/rajandhamala/Maruvo/db/sqlc"
 	"github.com/rajandhamala/Maruvo/internal/utils"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -40,13 +43,10 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	after := int64(0)
-	if value := r.URL.Query().Get("after"); value != "" {
-		after, err = strconv.ParseInt(value, 10, 64)
-		if err != nil || after < 0 {
-			postJSON(w, 400, map[string]string{"error": "invalid event cursor"})
-			return
-		}
+	cursor := r.URL.Query().Get("cursor")
+	if cursor != "" && !validStreamCursor(cursor) {
+		postJSON(w, 400, map[string]string{"error": "invalid stream cursor"})
+		return
 	}
 
 	post, err := c.queries.GetPost(r.Context(), id)
@@ -54,14 +54,52 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workspace, err := c.queries.GetWorkspace(r.Context(), id)
+	if cursor == "" {
+		cursor = "0-0"
+
+		if value := r.URL.Query().Get("after"); value != "" && value != "0" {
+			after, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || after < 0 {
+				postJSON(w, 400, map[string]string{"error": "invalid event cursor"})
+				return
+			}
+
+			saved, err := c.queries.WorkspaceEventStreamID(
+				r.Context(),
+				db.WorkspaceEventStreamIDParams{PostID: id, ID: after},
+			)
+			if errors.Is(err, pgx.ErrNoRows) {
+				postJSON(w, 400, map[string]string{"error": "unknown event cursor"})
+				return
+			}
+
+			if err != nil {
+				workspaceError(w, err)
+				return
+			}
+
+			if !saved.Valid {
+				postJSON(
+					w,
+					409,
+					map[string]string{"error": "event is not published yet; reload the workspace"},
+				)
+
+				return
+			}
+
+			cursor = saved.String
+		}
+	}
+
+	_, latest, err := c.recentStreamEvents(r.Context(), id)
 	if err != nil {
-		workspaceError(w, err)
+		postJSON(w, 503, map[string]string{"error": "workspace stream unavailable"})
 		return
 	}
 
-	if after > workspace.LastEventID {
-		postJSON(w, 400, map[string]string{"error": "event cursor is ahead of this workspace"})
+	if streamCursorAfter(cursor, latest) {
+		postJSON(w, 409, map[string]string{"error": "workspace stream reset; reload the workspace"})
 		return
 	}
 
@@ -76,7 +114,9 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 
 	conn.SetReadLimit(4096)
 	conn.SetReadDeadline(time.Now().Add(pongWait))
-	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(pongWait)) })
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 
 	go func() {
 		defer cancel()
@@ -92,73 +132,59 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 		conn.SetWriteDeadline(time.Now().Add(writeWait))
 		return conn.WriteJSON(WsResponse{Event: event, Data: data})
 	}
-	if write("connected", map[string]int64{"post_id": id, "after": after}) != nil {
+	if write("connected", map[string]any{"post_id": id, "cursor": cursor}) != nil {
 		return
 	}
 
-	poll := time.NewTicker(time.Second)
-	ping := time.NewTicker(pingPeriod)
+	lastPing := time.Now()
 
-	defer poll.Stop()
-	defer ping.Stop()
-
-	for {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	for ctx.Err() == nil {
 		if _, err := utils.VerifyUserToken(token); err != nil {
-			conn.WriteControl(
-				websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.ClosePolicyViolation,
-					"session expired"),
-				time.Now().Add(writeWait),
-			)
+			conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session expired"),
+				time.Now().Add(writeWait))
 
 			return
 		}
 
-		queryCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-		events, err := c.queries.ListWorkspaceEvents(
-			queryCtx,
-			db.ListWorkspaceEventsParams{PostID: id, ID: after},
-		)
-
-		stop()
-
-		if err != nil {
+		streams, err := c.redis.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{workspaceStreamKey(id), cursor},
+			Count:   100,
+			Block:   5 * time.Second,
+		}).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
 			return
 		}
 
-		for _, event := range events {
-			if write("workspace.event", event) != nil {
-				return
+		for _, stream := range streams {
+			for _, message := range stream.Messages {
+				event, err := decodeStreamEvent(message)
+				if err != nil || write("workspace.event", event) != nil {
+					return
+				}
+
+				cursor = message.ID
 			}
-
-			after = event.ID
 		}
 
-		if len(events) == 100 {
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-poll.C:
-		case <-ping.C:
-			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if _, err := utils.VerifyUserToken(token); err != nil {
-				conn.WriteControl(
-					websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.ClosePolicyViolation,
-						"session expired"),
-					time.Now().Add(writeWait),
-				)
-
-				return
-			}
-
+		if time.Since(lastPing) >= pingPeriod {
 			if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)) != nil {
 				return
 			}
+
+			lastPing = time.Now()
 		}
 	}
+}
+
+func streamCursorAfter(a, b string) bool {
+	aTime, aSequence, _ := strings.Cut(a, "-")
+	bTime, bSequence, _ := strings.Cut(b, "-")
+	at, _ := strconv.ParseUint(aTime, 10, 64)
+	bt, _ := strconv.ParseUint(bTime, 10, 64)
+	as, _ := strconv.ParseUint(aSequence, 10, 64)
+	bs, _ := strconv.ParseUint(bSequence, 10, 64)
+
+	return at > bt || (at == bt && as > bs)
 }

@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -118,6 +120,14 @@ func (c *Controller) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the stream before opening the database snapshot. Anything newer
+	// is replayed by the WebSocket, including events published during this read.
+	liveEvents, cursor, err := c.recentStreamEvents(r.Context(), id)
+	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+
 	tx, err := c.pool.BeginTx(
 		r.Context(),
 		pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
@@ -188,18 +198,15 @@ func (c *Controller) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 		files = []db.ListWorkspaceFilesRow{}
 	}
 
-	if events == nil {
-		events = []db.WorkspaceEvent{}
-	}
+	events = mergeWorkspaceEvents(events, liveEvents)
 
-	postJSON(
-		w,
-		200,
+	c.writePost(
+		w, r, 200, post,
 		map[string]any{
-			"post":       post,
 			"workspace":  workspace,
 			"files":      files,
 			"events":     events,
+			"cursor":     cursor,
 			"escrow":     funding,
 			"can_review": canReview,
 			"settlement": settlement,
@@ -284,7 +291,8 @@ func appendEvent(
 
 func (c *Controller) WorkspaceMessage(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Text string `json:"text"`
+		Text      string `json:"text"`
+		MessageID string `json:"message_id"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 20<<10)).Decode(&payload) != nil {
 		postJSON(w, 400, map[string]string{"error": "invalid message"})
@@ -297,10 +305,99 @@ func (c *Controller) WorkspaceMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.workspaceMutation(w, r, func(q *db.Queries, post db.Post, userID int64) (any, error) {
-		id, err := appendEvent(r, q, post.ID, userID, "message", payload)
-		return map[string]any{"event_id": id}, err
+	if payload.MessageID == "" {
+		payload.MessageID = uuid.NewString()
+	}
+
+	if len(payload.MessageID) > 128 || strings.Trim(payload.MessageID,
+		"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+		postJSON(
+			w,
+			400,
+			map[string]string{
+				"error": "message_id must contain 1 to 128 letters, digits, underscores or hyphens",
+			},
+		)
+
+		return
+	}
+
+	userID, ok := postUserID(w, r)
+	if !ok {
+		return
+	}
+
+	id, ok := workspacePostID(w, r)
+	if !ok {
+		return
+	}
+
+	post, err := c.queries.GetPost(r.Context(), id)
+	if !workspaceAccess(w, r, c.queries, post, err, userID) {
+		return
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+
+	event := db.WorkspaceEvent{
+		PostID:    id,
+		ActorID:   pgtype.Int8{Int64: userID, Valid: true},
+		Kind:      "message",
+		Data:      data,
+		CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	}
+
+	identity := fmt.Sprintf("chat:%d:%s", userID, payload.MessageID)
+	canPublish := post.Status != db.PostStatusCompleted && post.Status != db.PostStatusCancelled
+
+	cursor, err := c.publishEvent(r.Context(), event, identity, canPublish)
+	if err != nil {
+		if errors.Is(err, errMessageIDConflict) || errors.Is(err, errWorkspaceClosed) {
+			postJSON(w, 409, map[string]string{"error": err.Error()})
+			return
+		}
+
+		postJSON(w, 503, map[string]string{"error": "chat is temporarily unavailable"})
+
+		return
+	}
+
+	postJSON(w, 201, map[string]string{"message_id": payload.MessageID, "stream_id": cursor})
+}
+
+func mergeWorkspaceEvents(saved, live []db.WorkspaceEvent) []db.WorkspaceEvent {
+	events := make([]db.WorkspaceEvent, 0, len(saved)+len(live))
+	seen := make(map[string]bool)
+	seenIDs := make(map[int64]bool)
+
+	for _, event := range saved {
+		events = append(events, event)
+
+		seenIDs[event.ID] = true
+		if event.StreamID.Valid {
+			seen[event.StreamID.String] = true
+		}
+	}
+
+	for _, event := range live {
+		if !seen[event.StreamID.String] && (event.ID == 0 || !seenIDs[event.ID]) {
+			events = append(events, event)
+		}
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		return events[i].CreatedAt.Time.Before(events[j].CreatedAt.Time)
 	})
+
+	if len(events) > 100 {
+		events = events[len(events)-100:]
+	}
+
+	return events
 }
 
 func (c *Controller) SubmitWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -310,13 +407,13 @@ func (c *Controller) SubmitWorkspace(w http.ResponseWriter, r *http.Request) {
 		Files   []string `json:"files"`
 		Inputs  []string `json:"input_files"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 20<<10)).Decode(&payload) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&payload) != nil {
 		postJSON(w, 400, map[string]string{"error": "invalid submission"})
 		return
 	}
 
 	payload.Note = strings.TrimSpace(payload.Note)
-	if payload.Note == "" || !utf8.ValidString(payload.Note) || len([]rune(payload.Note)) > 4000 {
+	if payload.Note == "" || !validTaskText(payload.Note, 4000, 16000) {
 		postJSON(w, 400, map[string]string{"error": "describe your delivery in 1 to 4000 characters"})
 		return
 	}
@@ -352,17 +449,48 @@ func (c *Controller) SubmitWorkspace(w http.ResponseWriter, r *http.Request) {
 			return nil, &workspaceFailure{409, "delivery changed; refresh before submitting"}
 		}
 
+		saved, err := q.GetPostSettlement(r.Context(), post.ID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+
+		if err == nil {
+			saved, err = c.syncSettlement(r.Context(), q, post, escrow, saved, false)
+			if err != nil {
+				return nil, err
+			}
+
+			if saved.State != "failed" && saved.State != "expired" {
+				return nil, &workspaceFailure{409, "settlement is active; wait for confirmation or expiry"}
+			}
+		}
+
 		files, err := q.ListWorkspaceFiles(r.Context(), post.ID)
 		if err != nil {
 			return nil, err
 		}
 
 		if payload.Inputs != nil {
-			if len(payload.Inputs) != len(post.InputFiles) {
+			names := post.InputFiles
+			if len(names) == 0 {
+				seen := map[string]bool{}
+				for _, file := range files {
+					if file.UploadedBy == post.UserID &&
+						(file.Purpose == "input" || file.Purpose == "shared") &&
+						!seen[file.Name] {
+						names = append(names, file.Name)
+						seen[file.Name] = true
+					}
+				}
+
+				sort.Strings(names)
+			}
+
+			if len(payload.Inputs) != len(names) {
 				return nil, &workspaceFailure{409, "task inputs changed; refresh before submitting"}
 			}
 
-			for i, name := range post.InputFiles {
+			for i, name := range names {
 				latest := ""
 
 				for _, file := range files {

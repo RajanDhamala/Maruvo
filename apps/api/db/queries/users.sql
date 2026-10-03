@@ -7,6 +7,25 @@ VALUES ($1, $2, $3, $4)RETURNING *;
 -- name: CheckIfUserExist :one
 SELECT * FROM users WHERE google_id=$1;
 
+-- name: GetUser :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: SignInGitHub :one
+INSERT INTO users (github_id, github_login, username, avatar)
+VALUES (sqlc.narg(github_id)::text, sqlc.arg(github_login)::text,
+    sqlc.arg(github_login)::text, sqlc.narg(avatar)::text)
+ON CONFLICT (github_id) DO UPDATE SET github_login = EXCLUDED.github_login,
+    avatar = EXCLUDED.avatar
+RETURNING *;
+
+-- name: LinkGitHub :one
+UPDATE users SET github_id = $2, github_login = $3
+WHERE id = $1 AND (github_id IS NULL OR github_id = $2)
+RETURNING *;
+
+-- name: PublicUsers :many
+SELECT id, username, avatar, github_login FROM users WHERE id = ANY($1::bigint[]);
+
 -- name: CreatePost :one
 INSERT INTO posts (user_id,title,cost_lamports,end_time,status,level,description,acceptance_criteria,input_files,expected_outputs)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -80,12 +82,29 @@ func (ctrl *Controller) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"id":       user.ID,
-		"username": user.Username,
-		"email":    user.Email,
-		"avatar":   user.Avtar,
+	id, err := strconv.ParseInt(user.ID, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	profile, err := ctrl.queries.GetUser(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "account no longer exists; sign in again", http.StatusUnauthorized)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, "profile unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	postJSON(w, 200, map[string]any{
+		"id": user.ID, "username": profile.Username, "email": profile.Email.String,
+		"avatar": profile.Avatar.String, "github_login": profile.GithubLogin,
+		"github_url":       githubProfileURL(profile.GithubLogin),
+		"google_connected": profile.GoogleID.Valid, "github_connected": profile.GithubID.Valid,
 	})
 }
 
@@ -99,7 +118,7 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oauthState, err := utils.ParseOAuthState(state)
-	if err != nil {
+	if err != nil || (oauthState.Provider != "" && oauthState.Provider != "google") {
 		http.Error(w, "invalid OAuth state", http.StatusBadRequest)
 		return
 	}
@@ -133,7 +152,10 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := ctrl.oauth.Google.Exchange(r.Context(), code)
+	client := ctrl.oauthClient()
+	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, client)
+
+	token, err := ctrl.oauth.Google.Exchange(ctx, code)
 	if err != nil {
 		fail("failed to exchange code", http.StatusBadRequest)
 		return
@@ -152,7 +174,7 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		fail("failed to fetch google user", http.StatusBadGateway)
 		return
@@ -168,6 +190,11 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(res.Body).Decode(&user); err != nil {
 		fail("failed to decode google user", http.StatusInternalServerError)
+		return
+	}
+
+	if user.ID == "" || user.Email == "" {
+		fail("invalid Google profile response", http.StatusBadGateway)
 		return
 	}
 
@@ -187,7 +214,7 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 		dbUser, err = ctrl.queries.RegisterUser(
 			r.Context(),
 			db.RegisterUserParams{
-				Email: user.Email,
+				Email: pgtype.Text{String: user.Email, Valid: true},
 				GoogleID: pgtype.Text{
 					String: user.ID,
 					Valid:  true,
@@ -205,9 +232,29 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	ctrl.finishOAuthLogin(w, r, oauthState, dbUser, "Google")
+}
+
+func (ctrl *Controller) oauthClient() *http.Client {
+	if ctrl.oauth.Client != nil {
+		return ctrl.oauth.Client
+	}
+
+	return &http.Client{Timeout: 10 * time.Second}
+}
+
+func (ctrl *Controller) finishOAuthLogin(w http.ResponseWriter, r *http.Request,
+	oauthState *utils.OAuthStateClaims, dbUser db.User, provider string) {
+	fail := func(message string, status int) {
+		if oauthState.RedirectURI != "" {
+			redirectCLILogin(w, r, oauthState, "", message)
+		} else {
+			http.Error(w, message, status)
+		}
+	}
 	tempUser := utils.UserJWT{
 		ID:       strconv.FormatInt(dbUser.ID, 10),
-		Email:    dbUser.Email,
+		Email:    dbUser.Email.String,
 		Username: dbUser.Username,
 		Avtar:    dbUser.Avatar.String,
 		GoogleId: dbUser.GoogleID.String,
@@ -222,7 +269,12 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 
 	if oauthState.RedirectURI != "" {
-		code := ctrl.cliLogins.Issue(stringToken, oauthState.CodeChallenge)
+		code, err := ctrl.cliLogins.Issue(r.Context(), stringToken, oauthState.CodeChallenge)
+		if err != nil {
+			fail("CLI login is temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		redirectCLILogin(w, r, oauthState, code, "")
 
 		return
@@ -230,7 +282,7 @@ func (ctrl *Controller) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{
 		"token":   stringToken,
-		"message": "Google login successful",
+		"message": provider + " login successful",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -277,13 +329,18 @@ func (ctrl *Controller) ExchangeCLIToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	token, err := ctrl.cliLogins.Redeem(payload.Code, payload.CodeVerifier)
+	token, err := ctrl.cliLogins.Redeem(r.Context(), payload.Code, payload.CodeVerifier)
 	if err != nil {
-		http.Error(w, "invalid or expired CLI login", http.StatusUnauthorized)
+		if errors.Is(err, utils.ErrInvalidCLILogin) {
+			http.Error(w, "invalid or expired CLI login", http.StatusUnauthorized)
+		} else {
+			http.Error(w, "CLI login is temporarily unavailable", http.StatusServiceUnavailable)
+		}
+
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]string{"token": token, "message": "Google login successful"})
+	json.NewEncoder(w).Encode(map[string]string{"token": token, "message": "Login successful"})
 }

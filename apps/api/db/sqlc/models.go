@@ -133,6 +133,8 @@ type PostEscrow struct {
 	StorageLamports      int64              `json:"storage_lamports"`
 	State                string             `json:"state"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	AgreementVersion     int32              `json:"agreement_version"`
+	SignedTransaction    string             `json:"signed_transaction"`
 }
 
 type PostSettlement struct {
@@ -162,12 +164,14 @@ type PostWorkspace struct {
 }
 
 type User struct {
-	ID        int64              `json:"id"`
-	Email     string             `json:"email"`
-	GoogleID  pgtype.Text        `json:"google_id"`
-	Username  string             `json:"username"`
-	Avatar    pgtype.Text        `json:"avatar"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID          int64              `json:"id"`
+	Email       pgtype.Text        `json:"email"`
+	GoogleID    pgtype.Text        `json:"google_id"`
+	Username    string             `json:"username"`
+	Avatar      pgtype.Text        `json:"avatar"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	GithubID    pgtype.Text        `json:"github_id"`
+	GithubLogin string             `json:"github_login"`
 }
 
 type Wallet struct {
@@ -190,6 +194,7 @@ type WorkspaceEvent struct {
 	Kind      string             `json:"kind"`
 	Data      json.RawMessage    `json:"data"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	StreamID  pgtype.Text        `json:"stream_id"`
 }
 
 type WorkspaceFile struct {

@@ -43,7 +43,7 @@ func viewSettlement(saved db.PostSettlement, signing bool) settlementView {
 
 func checkRequest(post db.Post, escrow db.PostEscrow) *pb.CheckEscrowRequest {
 	return &pb.CheckEscrowRequest{
-		Agreement:            agreement(post),
+		Agreement:            agreement(post, escrow.AgreementVersion),
 		Address:              escrow.Address,
 		Signature:            escrow.Signature,
 		LastValidBlockHeight: uint64(escrow.LastValidBlockHeight),
@@ -80,7 +80,7 @@ type reviewPayload struct {
 }
 
 func readReview(w http.ResponseWriter, r *http.Request) (reviewPayload, bool) {
-	var payload reviewPayload
+	payload := reviewPayload{SubmissionVersion: -1}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 20<<10)).Decode(&payload) != nil {
 		postJSON(w, 400, map[string]string{"error": "invalid review payload"})
 		return payload, false
@@ -88,7 +88,7 @@ func readReview(w http.ResponseWriter, r *http.Request) (reviewPayload, bool) {
 
 	payload.Note = strings.TrimSpace(payload.Note)
 	if payload.Note == "" || !utf8.ValidString(payload.Note) || len([]rune(payload.Note)) > 4000 ||
-		payload.SubmissionVersion <= 0 {
+		payload.SubmissionVersion < 0 {
 		postJSON(
 			w,
 			400,
@@ -99,6 +99,19 @@ func readReview(w http.ResponseWriter, r *http.Request) (reviewPayload, bool) {
 	}
 
 	return payload, true
+}
+
+func canSettle(workspace db.PostWorkspace, action string, version int64) bool {
+	if workspace.SubmissionVersion != version || version < 0 {
+		return false
+	}
+
+	if action == "release" {
+		return version > 0 && workspace.ReviewState == "submitted"
+	}
+
+	return action == "refund" && (workspace.ReviewState == "working" ||
+		workspace.ReviewState == "submitted" || workspace.ReviewState == "changes_requested")
 }
 
 func (c *Controller) PreparePostSettlement(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +135,7 @@ func (c *Controller) PreparePostSettlement(w http.ResponseWriter, r *http.Reques
 			return nil, err
 		}
 
-		post, escrow, err = c.syncEscrow(r.Context(), q, post, escrow)
+		post, escrow, err = c.syncEscrow(r.Context(), q, post, escrow, false)
 		if err != nil {
 			return nil, err
 		}
@@ -137,11 +150,11 @@ func (c *Controller) PreparePostSettlement(w http.ResponseWriter, r *http.Reques
 			return nil, err
 		}
 
-		if workspace.ReviewState != "submitted" || workspace.SubmissionVersion != payload.SubmissionVersion {
+		if !canSettle(workspace, payload.Action, payload.SubmissionVersion) {
 			postJSON(
 				w,
 				409,
-				map[string]string{"error": "delivery changed; refresh and review the latest submission"},
+				map[string]string{"error": "refresh the current delivery; payout requires submitted work"},
 			)
 
 			return nil, nil
@@ -231,7 +244,7 @@ func (c *Controller) RequestPostChanges(w http.ResponseWriter, r *http.Request) 
 			return nil, err
 		}
 
-		post, escrow, err = c.syncEscrow(r.Context(), q, post, escrow)
+		post, escrow, err = c.syncEscrow(r.Context(), q, post, escrow, false)
 		if err != nil {
 			return nil, err
 		}
@@ -357,7 +370,7 @@ func (c *Controller) SubmitPostSettlement(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if workspace.ReviewState != "submitted" || workspace.SubmissionVersion != saved.SubmissionVersion ||
+	if !canSettle(workspace, saved.Action, saved.SubmissionVersion) ||
 		escrow.State != "confirmed" {
 		postJSON(w, 409, map[string]string{"error": "delivery or escrow changed; refresh before settling"})
 		return

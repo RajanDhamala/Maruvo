@@ -71,7 +71,7 @@ func (c *Controller) refreshPostEscrow(parent context.Context, id int64) error {
 		return err
 	}
 
-	post, escrow, err = c.syncEscrow(ctx, q, post, escrow)
+	post, escrow, err = c.syncEscrow(ctx, q, post, escrow, true)
 	if err != nil {
 		return err
 	}

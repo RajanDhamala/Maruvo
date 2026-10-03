@@ -83,7 +83,7 @@ func (q *Queries) GetWorkspaceFile(ctx context.Context, arg GetWorkspaceFilePara
 }
 
 const listWorkspaceEvents = `-- name: ListWorkspaceEvents :many
-SELECT post_id, id, actor_id, kind, data, created_at FROM workspace_events WHERE post_id = $1 AND id > $2 ORDER BY id LIMIT 100
+SELECT post_id, id, actor_id, kind, data, created_at, stream_id FROM workspace_events WHERE post_id = $1 AND id > $2 ORDER BY id LIMIT 100
 `
 
 type ListWorkspaceEventsParams struct {
@@ -107,6 +107,7 @@ func (q *Queries) ListWorkspaceEvents(ctx context.Context, arg ListWorkspaceEven
 			&i.Kind,
 			&i.Data,
 			&i.CreatedAt,
+			&i.StreamID,
 		); err != nil {
 			return nil, err
 		}
@@ -164,7 +165,7 @@ func (q *Queries) ListWorkspaceFiles(ctx context.Context, postID int64) ([]ListW
 }
 
 const recentWorkspaceEvents = `-- name: RecentWorkspaceEvents :many
-SELECT post_id, id, actor_id, kind, data, created_at FROM (SELECT post_id, id, actor_id, kind, data, created_at FROM workspace_events WHERE post_id = $1 ORDER BY id DESC LIMIT 100) recent ORDER BY id
+SELECT post_id, id, actor_id, kind, data, created_at, stream_id FROM (SELECT post_id, id, actor_id, kind, data, created_at, stream_id FROM workspace_events WHERE post_id = $1 ORDER BY id DESC LIMIT 100) recent ORDER BY id
 `
 
 func (q *Queries) RecentWorkspaceEvents(ctx context.Context, postID int64) ([]WorkspaceEvent, error) {
@@ -183,6 +184,7 @@ func (q *Queries) RecentWorkspaceEvents(ctx context.Context, postID int64) ([]Wo
 			&i.Kind,
 			&i.Data,
 			&i.CreatedAt,
+			&i.StreamID,
 		); err != nil {
 			return nil, err
 		}

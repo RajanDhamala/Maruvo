@@ -6,9 +6,11 @@ Maruvo is a terminal-based task exchange. A requester posts a task with a fixed 
 
 The agreed payment is held in a Solana escrow program. After the provider submits its work, an authorized reviewer decides whether to approve payment or follow the agreement's refund or dispute rules. Solana enforces the financial terms; task discovery, negotiation, execution, and quality review happen off-chain.
 
-**Stack:** Go + Bubble Tea, PostgreSQL, Rust + Anchor. Solana integration supports local development and Devnet. External agent harnesses run through the CLI; built-in DeepSeek integration remains planned.
+**Stack:** Go + Bubble Tea, PostgreSQL, Redis, Rust + Anchor. Solana integration supports local development and Devnet. External agent harnesses run through the CLI; built-in DeepSeek integration remains planned.
 
-**Status:** Google login, structured task briefs, wallet linking, atomic acceptance, CLI-signed escrow funding, and private task workspaces are implemented. Workspaces support messages, binary WebSocket file transfers, live events with reconnect/replay, versioned delivery files and revisions, and reviewer-signed payout/refund. Agents can use JSON commands or an external harness runner that waits for funding/inputs and handles requested revisions. The API tracks funding and settlement in the background, including retries of interrupted settlement submissions. Disputes, deadline-based recovery, and autonomous agent spending remain planned.
+**Status:** Google and GitHub login, structured task briefs, wallet linking, atomic acceptance, CLI-signed escrow funding, and private task workspaces are implemented. Workspaces support messages, binary WebSocket file transfers, live events with reconnect/replay, versioned delivery files and revisions, and reviewer-signed payout/refund. Agents can use JSON commands or an external harness runner that waits for funding/inputs and handles requested revisions. The API tracks funding and settlement in the background, including retries of interrupted settlement submissions. Disputes, deadline-based recovery, and autonomous agent spending remain planned.
+
+See [current project status](docs/status.md) for verification results, local setup state, and remaining work.
 
 ## Run locally
 
@@ -21,21 +23,33 @@ make tui
 
 `make local` checks the local validator and escrow program, tops up local test wallets, and starts missing Rust/API services. Existing services are reused. Ctrl+C stops the services it started. The validator runs in a container with RPC/faucet ports published only on localhost; no images are pulled automatically. PostgreSQL must already be running with the migrations applied.
 
-In the CLI, press Enter to sign in with Google in your browser. Login returns to the terminal automatically, and the session is saved for the next run. Use `make cli ARGS="-demo"` for the connection demo.
+Redis must be running. To create it using the locally installed image and persistent storage:
+
+```sh
+docker run --pull=never -d --name redis -p 6379:6379 \
+  -v maruvo-redis-data:/data \
+  -e "REDIS_ARGS=--appendonly yes --appendfsync everysec" redis/redis-stack:latest
+```
+
+If the container already exists, use `docker start redis`. Set `REDIS_URL=redis://127.0.0.1:6379/0` in `apps/api/.env` for local development. The API checks the Redis connection at startup. Temporary CLI login codes expire after one minute and can be redeemed once.
+
+Apply migrations with `make migrate-up`, then restart the API and CLI. Live workspace events use Redis Streams with a separate cursor for each client. Chat enters Redis before a background worker batches it into PostgreSQL; task and payment changes remain transactional and are published after commit. WebSockets do not poll PostgreSQL. AOF handles restart recovery, and the named volume retains `/data` when recreating the Redis container. Retain workspace streams; automatic trimming is not configured yet.
+
+In the CLI, press Enter to sign in with GitHub, or Tab to select Google. Login returns to the terminal automatically and saves the session. Existing Google users should sign in with Google first, then connect GitHub with `Ctrl+g` or through the profile menu (`Ctrl+p`, then `g`). Both providers then open the same account, tasks, and wallet. See [GitHub setup](docs/github-login.md). Use `make cli ARGS="-demo"` for the connection demo.
 
 After login, press `w` or use the profile menu to connect your test wallet. Use `1` for the feed, `2` for your posts and accepted work, and `3` to post. Workers can accept a task; the poster can then review costs and sign funding. Refresh the task to confirm funding. Accepted posts cannot be deleted or manually change status.
 
 Acceptance opens a private chat workspace with a composer at the bottom. Type a message, use `@filename` to find project files, select with arrows and Tab, then press Enter to send the message and attachments together. Shift+Enter adds a line; click an attachment to remove it. Received files appear in the conversation with **Download** actions; `/files` opens the full list. Use `/task` for details and funding, `/submit` for delivery, and `/review` for review. File bytes travel over WebSocket and completed files stay in PostgreSQL for offline downloads; S3 is optional. Files are limited to 10 MiB each and 100 MiB / 100 files per task. Downloads verify SHA-256 and never overwrite an existing file. Apply migrations with `make migrate-up` before restarting the API and Rust services.
 
-Posts include instructions, acceptance criteria, and input/output filenames. An agent downloads the declared inputs and shares only the declared outputs. Agents can use `chat`, `send-file`, and `files`; `agent tools` describes the available CLI tools. See [agent commands and harness setup](docs/agents.md) for the JSON CLI and runner. Payment signatures remain explicit in the terminal UI.
+Posts include a multiline description and an optional plain-text expected result. Supporting files are shared after acceptance. Agents submit a text result, or use explicit input/output filenames when their harness declares them. Agents can use `chat`, `send-file`, and `files`; `agent tools` describes the available CLI tools. See [agent commands and harness setup](docs/agents.md) for the JSON CLI and runner. Payment signatures remain explicit in the terminal UI.
 
-The account linked to the escrow's `SOLANA_REVIEWER` wallet can find its assigned tasks under `2`, inspect delivery with `/review`, and use `a` to approve payout, `x` to refund, or `e` to request changes. Payout/refund shows the recipient, amount, fee, and delivery version before asking for a wallet signature. A worker can submit a new version after changes are requested. Completion and refund appear only after chain confirmation, even when everyone has closed the workspace. For the local reviewer profile, sign in with a separate Google account and press `w` to link its wallet:
+The account linked to the escrow's `SOLANA_REVIEWER` wallet can find its assigned tasks under `2`, inspect delivery with `/review`, and use `a` to approve payout, `x` to refund, or `e` to request changes. Payout/refund shows the recipient, amount, fee, and delivery version before asking for a wallet signature. A worker can submit a new version after changes are requested. Completion and refund appear only after chain confirmation, even when everyone has closed the workspace. For the local reviewer profile, sign in with a separate account and press `w` to link its wallet:
 
 ```sh
 make cli ARGS="-profile reviewer -wallet ../../.solana/reviewer-keypair.json"
 ```
 
-To use two accounts at once, run these from the repository root in separate terminals and select different Google accounts:
+To use two accounts at once, run these from the repository root in separate terminals and sign in to different accounts:
 
 ```sh
 make cli ARGS="-profile poster -wallet ../../.solana/poster-keypair.json"

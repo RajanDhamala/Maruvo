@@ -1,65 +1,96 @@
 package utils
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"sync"
+	"fmt"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-type cliLogin struct {
-	token     string
-	challenge string
-	expiresAt time.Time
-}
+const cliLoginTTL = time.Minute
+
+var ErrInvalidCLILogin = errors.New("invalid or expired CLI login code or verifier")
+
+// Lua Script 2 Verify the challenge and consume the code in a single Redis operation.
+var redeemCLILogin = redis.NewScript(`
+local value = redis.call('GET', KEYS[1])
+if not value then
+    return false
+end
+local login = cjson.decode(value)
+if login.challenge ~= ARGV[1] then
+    return false
+end
+redis.call('DEL', KEYS[1])
+return login.token
+`)
 
 type CLILogins struct {
-	mu    sync.Mutex
-	codes map[string]cliLogin
+	client *redis.Client
 }
 
-func NewCLILogins() *CLILogins {
-	return &CLILogins{codes: make(map[string]cliLogin)}
-}
-
-func (s *CLILogins) Issue(token, challenge string) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for code, login := range s.codes {
-		if !time.Now().Before(login.expiresAt) {
-			delete(s.codes, code)
-		}
+func NewCLILogins(client *redis.Client) *CLILogins {
+	temp := CLILogins{
+		client: client,
 	}
 
-	code := rand.Text()
-	s.codes[code] = cliLogin{token: token, challenge: challenge, expiresAt: time.Now().Add(time.Minute)}
-
-	return code
+	return &temp
 }
 
-func (s *CLILogins) Redeem(code, verifier string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *CLILogins) Issue(ctx context.Context, token, challenge string) (string, error) {
+	login := struct {
+		Token     string `json:"token"`
+		Challenge string `json:"challenge"`
+	}{
+		Token:     token,
+		Challenge: challenge,
+	}
 
-	login, ok := s.codes[code]
-	if !ok || !time.Now().Before(login.expiresAt) {
-		delete(s.codes, code)
-		return "", errors.New("invalid or expired CLI login code")
+	value, err := json.Marshal(login)
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		code := rand.Text()
+
+		stored, err := s.client.SetNX(ctx, cliLoginKey(code), value, cliLoginTTL).Result()
+		if err != nil {
+			return "", fmt.Errorf("store CLI login: %w", err)
+		}
+
+		if stored {
+			return code, nil
+		}
+	}
+}
+
+func (s *CLILogins) Redeem(ctx context.Context, code, verifier string) (string, error) {
+	if code == "" || len(verifier) < 43 || len(verifier) > 128 {
+		return "", ErrInvalidCLILogin
 	}
 
 	hash := sha256.Sum256([]byte(verifier))
-
 	challenge := base64.RawURLEncoding.EncodeToString(hash[:])
-	if len(verifier) < 43 || len(verifier) > 128 ||
-		subtle.ConstantTimeCompare([]byte(challenge), []byte(login.challenge)) != 1 {
-		return "", errors.New("invalid CLI login verifier")
+
+	token, err := redeemCLILogin.Run(ctx, s.client, []string{cliLoginKey(code)}, challenge).Text()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrInvalidCLILogin
 	}
 
-	delete(s.codes, code)
+	if err != nil {
+		return "", fmt.Errorf("redeem CLI login: %w", err)
+	}
 
-	return login.token, nil
+	return token, nil
+}
+
+func cliLoginKey(code string) string {
+	return "maruvo:oauth:cli:" + code
 }

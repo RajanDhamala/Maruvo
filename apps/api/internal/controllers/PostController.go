@@ -42,6 +42,16 @@ type PostFeedPayload struct {
 	Level db.PostLevel `json:"level"`
 }
 
+const maxDescriptionBytes = 32 << 10
+const maxDescriptionCharacters = 12000
+
+func validTaskText(text string, characters, bytes int) bool {
+	return utf8.ValidString(text) && utf8.RuneCountInString(text) <= characters && len(text) <= bytes &&
+		strings.IndexFunc(text, func(r rune) bool {
+			return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t'
+		}) < 0
+}
+
 func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 	userID, ok := postUserID(w, r)
 	if !ok {
@@ -49,17 +59,21 @@ func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload CreatePostPayload
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&payload); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&payload); err != nil {
 		postJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid post payload"})
 		return
 	}
 
 	payload.Title = strings.TrimSpace(payload.Title)
-	payload.Description = strings.TrimSpace(payload.Description)
 
 	payload.AcceptanceCriteria = strings.TrimSpace(payload.AcceptanceCriteria)
-	if payload.Description == "" {
-		payload.Description = payload.Title
+	if strings.TrimSpace(payload.Description) == "" ||
+		!validTaskText(payload.Description, maxDescriptionCharacters, maxDescriptionBytes) {
+		postJSON(w, 400, map[string]string{
+			"error": "provide a text description of at most 32 KiB and 12,000 characters",
+		})
+
+		return
 	}
 
 	if payload.InputFiles == nil {
@@ -70,9 +84,7 @@ func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 		payload.ExpectedOutputs = []string{}
 	}
 
-	if !utf8.ValidString(payload.Description) || !utf8.ValidString(payload.AcceptanceCriteria) ||
-		len([]rune(payload.Description)) > 12000 ||
-		len([]rune(payload.AcceptanceCriteria)) > 4000 ||
+	if !validTaskText(payload.AcceptanceCriteria, 4000, 16000) ||
 		!validTaskFiles(payload.InputFiles) ||
 		!validTaskFiles(payload.ExpectedOutputs) {
 		postJSON(
@@ -117,7 +129,7 @@ func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postJSON(w, http.StatusCreated, map[string]any{"post": post})
+	c.writePost(w, r, http.StatusCreated, post, nil)
 }
 
 func validTaskFiles(names []string) bool {
@@ -160,7 +172,7 @@ func (c *Controller) GetUrPosts(w http.ResponseWriter, r *http.Request) {
 		posts = []db.Post{}
 	}
 
-	postJSON(w, http.StatusOK, map[string]any{"posts": posts})
+	c.writePosts(w, r, posts)
 }
 
 func (c *Controller) DeletePost(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +238,7 @@ func (c *Controller) UpdatePostStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postJSON(w, http.StatusOK, map[string]any{"post": post})
+	c.writePost(w, r, http.StatusOK, post, nil)
 }
 
 func (c *Controller) DescLevelPost(w http.ResponseWriter, r *http.Request) {
@@ -254,7 +266,7 @@ func (c *Controller) DescLevelPost(w http.ResponseWriter, r *http.Request) {
 		posts = []db.Post{}
 	}
 
-	postJSON(w, http.StatusOK, map[string]any{"posts": posts})
+	c.writePosts(w, r, posts)
 }
 
 func postUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {

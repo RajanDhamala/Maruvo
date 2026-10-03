@@ -19,27 +19,29 @@ import (
 )
 
 type fundingView struct {
-	State           string `json:"state"`
-	Address         string `json:"address"`
-	ProgramID       string `json:"program_id"`
-	Reviewer        string `json:"reviewer"`
-	Network         string `json:"network"`
-	Signature       string `json:"signature"`
-	Transaction     string `json:"transaction,omitempty"`
-	FeeLamports     int64  `json:"fee_lamports"`
-	StorageLamports int64  `json:"storage_lamports"`
+	AgreementVersion int32  `json:"agreement_version"`
+	State            string `json:"state"`
+	Address          string `json:"address"`
+	ProgramID        string `json:"program_id"`
+	Reviewer         string `json:"reviewer"`
+	Network          string `json:"network"`
+	Signature        string `json:"signature"`
+	Transaction      string `json:"transaction,omitempty"`
+	FeeLamports      int64  `json:"fee_lamports"`
+	StorageLamports  int64  `json:"storage_lamports"`
 }
 
 func escrowView(escrow db.PostEscrow, signing bool) fundingView {
 	view := fundingView{
-		State:           escrow.State,
-		Address:         escrow.Address,
-		ProgramID:       escrow.ProgramID,
-		Reviewer:        escrow.Reviewer,
-		Network:         escrow.Network,
-		Signature:       escrow.Signature,
-		FeeLamports:     escrow.FeeLamports,
-		StorageLamports: escrow.StorageLamports,
+		AgreementVersion: escrow.AgreementVersion,
+		State:            escrow.State,
+		Address:          escrow.Address,
+		ProgramID:        escrow.ProgramID,
+		Reviewer:         escrow.Reviewer,
+		Network:          escrow.Network,
+		Signature:        escrow.Signature,
+		FeeLamports:      escrow.FeeLamports,
+		StorageLamports:  escrow.StorageLamports,
 	}
 	if signing && escrow.State == "prepared" {
 		view.Transaction = escrow.Transaction
@@ -48,7 +50,7 @@ func escrowView(escrow db.PostEscrow, signing bool) fundingView {
 	return view
 }
 
-func agreement(post db.Post) *pb.PrepareEscrowRequest {
+func agreement(post db.Post, version int32) *pb.PrepareEscrowRequest {
 	terms := fmt.Sprintf(
 		"maruvo-escrow-v1\n%d\n%d\n%d\n%s\n%s\n%d\n%s\n%s\n%s",
 		post.ID,
@@ -61,6 +63,17 @@ func agreement(post db.Post) *pb.PrepareEscrowRequest {
 		post.Level,
 		post.Title,
 	)
+	if version == 2 {
+		data, _ := json.Marshal([]any{
+			"maruvo-escrow-v2", post.ID, post.UserID, post.AcceptedBy.Int64,
+			post.PosterWallet, post.WorkerWallet, post.CostLamports,
+			post.EndTime.Time.UTC().Format(time.RFC3339Nano), string(post.Level), post.Title,
+			post.Description, post.AcceptanceCriteria,
+			append([]string{}, post.InputFiles...), append([]string{}, post.ExpectedOutputs...),
+		})
+		terms = string(data)
+	}
+
 	hash := sha256.Sum256([]byte(terms))
 
 	return &pb.PrepareEscrowRequest{
@@ -120,11 +133,9 @@ func (c *Controller) AcceptPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postJSON(
-		w,
-		200,
+	c.writePost(
+		w, r, 200, post,
 		map[string]any{
-			"post":    post,
 			"message": "Accepted. Wait for the poster to fund escrow before starting work.",
 		},
 	)
@@ -222,7 +233,7 @@ func (c *Controller) PostInfo(w http.ResponseWriter, r *http.Request) {
 
 	escrow, err := q.GetPostEscrow(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		postJSON(w, 200, map[string]any{"post": post, "escrow": fundingView{State: "unfunded"}})
+		c.writePost(w, r, 200, post, map[string]any{"escrow": fundingView{State: "unfunded"}})
 		return
 	}
 
@@ -231,7 +242,7 @@ func (c *Controller) PostInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, escrow, err = c.syncEscrow(ctx, q, post, escrow)
+	post, escrow, err = c.syncEscrow(ctx, q, post, escrow, false)
 	if err != nil {
 		escrowError(w, err)
 		return
@@ -242,7 +253,7 @@ func (c *Controller) PostInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postJSON(w, 200, map[string]any{"post": post, "escrow": escrowView(escrow, false)})
+	c.writePost(w, r, 200, post, map[string]any{"escrow": escrowView(escrow, false)})
 }
 
 func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) {
@@ -296,7 +307,7 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err == nil {
-		post, escrow, err = c.syncEscrow(ctx, q, post, escrow)
+		post, escrow, err = c.syncEscrow(ctx, q, post, escrow, false)
 		if err != nil {
 			escrowError(w, err)
 			return
@@ -308,7 +319,7 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 
-			postJSON(w, 200, map[string]any{"post": post, "escrow": escrowView(escrow, true)})
+			c.writePost(w, r, 200, post, map[string]any{"escrow": escrowView(escrow, true)})
 
 			return
 		}
@@ -319,7 +330,7 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	plan, err := pb.NewSolanaServiceClient(c.rpc).PrepareEscrow(ctx, agreement(post))
+	plan, err := pb.NewSolanaServiceClient(c.rpc).PrepareEscrow(ctx, agreement(post, 2))
 	if err != nil {
 		escrowError(w, err)
 		return
@@ -328,6 +339,7 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 	escrow, err = q.SavePostEscrow(
 		ctx,
 		db.SavePostEscrowParams{
+			AgreementVersion:     2,
 			PostID:               id,
 			Address:              plan.Address,
 			ProgramID:            plan.ProgramId,
@@ -349,7 +361,7 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	postJSON(w, 200, map[string]any{"post": post, "escrow": escrowView(escrow, true)})
+	c.writePost(w, r, 200, post, map[string]any{"escrow": escrowView(escrow, true)})
 }
 
 func (c *Controller) SubmitPostFunding(w http.ResponseWriter, r *http.Request) {
@@ -407,13 +419,20 @@ func (c *Controller) SubmitPostFunding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if escrow.State == "prepared" {
+	if escrow.State == "confirmed" && escrow.Signature == signature {
+		c.writePost(w, r, 200, post, map[string]any{"escrow": escrowView(escrow, false)})
+		return
+	}
+
+	if escrow.State == "prepared" ||
+		(escrow.State == "pending" && escrow.Signature == signature && escrow.SignedTransaction == "") {
 		escrow, err = q.MarkEscrowSubmitted(
 			ctx,
 			db.MarkEscrowSubmittedParams{
-				PostID:      post.ID,
-				Signature:   signature,
-				Transaction: escrow.Transaction,
+				PostID:            post.ID,
+				Signature:         signature,
+				Transaction:       escrow.Transaction,
+				SignedTransaction: payload.Transaction,
 			},
 		)
 		if err != nil {
@@ -424,7 +443,7 @@ func (c *Controller) SubmitPostFunding(w http.ResponseWriter, r *http.Request) {
 		postJSON(w, 409, map[string]string{"error": "funding already submitted; refresh this post"})
 		return
 	}
-	// Persist the signature before contacting RPC so a timeout cannot lose a payment.
+	// Persist the signed transaction before RPC so the monitor can retry after a restart.
 	if err = tx.Commit(ctx); err != nil {
 		escrowError(w, err)
 		return
@@ -437,11 +456,9 @@ func (c *Controller) SubmitPostFunding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postJSON(
-		w,
-		http.StatusAccepted,
+	c.writePost(
+		w, r, http.StatusAccepted, post,
 		map[string]any{
-			"post":    post,
 			"escrow":  escrowView(escrow, false),
 			"message": "Funding submitted. Refresh to verify confirmation.",
 		},
@@ -453,9 +470,11 @@ func (c *Controller) syncEscrow(
 	q *db.Queries,
 	post db.Post,
 	escrow db.PostEscrow,
+	retry bool,
 ) (db.Post, db.PostEscrow, error) {
-	result, err := pb.NewSolanaServiceClient(c.rpc).
-		CheckEscrow(ctx, &pb.CheckEscrowRequest{Agreement: agreement(post), Address: escrow.Address, Signature: escrow.Signature, LastValidBlockHeight: uint64(escrow.LastValidBlockHeight), ProgramId: escrow.ProgramID, Reviewer: escrow.Reviewer, Network: escrow.Network})
+	client := pb.NewSolanaServiceClient(c.rpc)
+
+	result, err := client.CheckEscrow(ctx, checkRequest(post, escrow))
 	if err != nil {
 		return post, escrow, err
 	}
@@ -482,6 +501,12 @@ func (c *Controller) syncEscrow(
 		}
 
 		escrow.State = result.State
+	}
+
+	if retry && result.State == "pending" && escrow.SignedTransaction != "" {
+		_, _ = client.SubmitEscrow(ctx, &pb.SubmitEscrowRequest{
+			Transaction: escrow.Transaction, SignedTransaction: escrow.SignedTransaction,
+		})
 	}
 
 	if result.State == "confirmed" && post.Status == db.PostStatusNegotiating {

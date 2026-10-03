@@ -13,10 +13,27 @@ import (
 )
 
 type OAuthStateClaims struct {
+	Provider      string `json:"provider,omitempty"`
+	LinkUserID    int64  `json:"link_user_id,omitempty"`
 	RedirectURI   string `json:"cli_redirect_uri,omitempty"`
 	CodeChallenge string `json:"code_challenge,omitempty"`
 	CLIState      string `json:"cli_state,omitempty"`
 	jwt.RegisteredClaims
+}
+
+func CreateProviderOAuthState(
+	provider, redirectURI, challenge, cliState string,
+	linkUserID int64,
+) (string, error) {
+	temp, err := signOAuthState(OAuthStateClaims{
+		Provider:      provider,
+		LinkUserID:    linkUserID,
+		RedirectURI:   redirectURI,
+		CodeChallenge: challenge,
+		CLIState:      cliState,
+	})
+
+	return temp, err
 }
 
 func CreateOAuthState() (string, error) {

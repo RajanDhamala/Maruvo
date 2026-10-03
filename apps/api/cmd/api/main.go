@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,6 +38,13 @@ func main() {
 	}
 	defer pool.Close()
 
+	redisClient, err := utils.ConnectRedis()
+	if err != nil {
+		fmt.Println("error while connecting to Redis", err.Error())
+		panic(err)
+	}
+	defer redisClient.Close()
+
 	rpc, err := utils.InitGrpc()
 	if err != nil {
 		fmt.Println("err while connecting to rpc server", err.Error())
@@ -45,22 +53,18 @@ func main() {
 	defer rpc.Close()
 
 	oauthConfig := utils.NewOAuthConfig()
-	ctrl := controller.NewController(pool, rpc, oauthConfig)
+	ctrl := controller.NewController(pool, rpc, oauthConfig, redisClient)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	monitorDone := make(chan struct{})
-
-	go func() {
-		defer close(monitorDone)
-
-		ctrl.RunEscrowMonitor(ctx)
-	}()
+	var workers sync.WaitGroup
+	workers.Go(func() { ctrl.RunEscrowMonitor(ctx) })
+	workers.Go(func() { ctrl.RunWorkspaceWorkers(ctx) })
 
 	defer func() {
 		stop()
-		<-monitorDone
+		workers.Wait()
 	}()
 
 	if host == "" || port == "" {
@@ -80,6 +84,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 
 	go func() {

@@ -99,7 +99,7 @@ func (q *Queries) GetPost(ctx context.Context, id int64) (Post, error) {
 }
 
 const getPostEscrow = `-- name: GetPostEscrow :one
-SELECT post_id, address, program_id, reviewer, network, transaction, signature, last_valid_block_height, fee_lamports, storage_lamports, state, updated_at FROM post_escrows WHERE post_id = $1
+SELECT post_id, address, program_id, reviewer, network, transaction, signature, last_valid_block_height, fee_lamports, storage_lamports, state, updated_at, agreement_version, signed_transaction FROM post_escrows WHERE post_id = $1
 `
 
 func (q *Queries) GetPostEscrow(ctx context.Context, postID int64) (PostEscrow, error) {
@@ -118,6 +118,8 @@ func (q *Queries) GetPostEscrow(ctx context.Context, postID int64) (PostEscrow, 
 		&i.StorageLamports,
 		&i.State,
 		&i.UpdatedAt,
+		&i.AgreementVersion,
+		&i.SignedTransaction,
 	)
 	return i, err
 }
@@ -198,18 +200,26 @@ func (q *Queries) LockPost(ctx context.Context, id int64) (Post, error) {
 }
 
 const markEscrowSubmitted = `-- name: MarkEscrowSubmitted :one
-UPDATE post_escrows SET signature = $2, state = 'pending', updated_at = NOW()
-WHERE post_id = $1 AND transaction = $3 AND state = 'prepared' RETURNING post_id, address, program_id, reviewer, network, transaction, signature, last_valid_block_height, fee_lamports, storage_lamports, state, updated_at
+UPDATE post_escrows SET signature = $2, signed_transaction = $4, state = 'pending', updated_at = NOW()
+WHERE post_id = $1 AND transaction = $3
+    AND (state = 'prepared' OR (state = 'pending' AND signature = $2 AND signed_transaction = ''))
+RETURNING post_id, address, program_id, reviewer, network, transaction, signature, last_valid_block_height, fee_lamports, storage_lamports, state, updated_at, agreement_version, signed_transaction
 `
 
 type MarkEscrowSubmittedParams struct {
-	PostID      int64  `json:"post_id"`
-	Signature   string `json:"signature"`
-	Transaction string `json:"transaction"`
+	PostID            int64  `json:"post_id"`
+	Signature         string `json:"signature"`
+	Transaction       string `json:"transaction"`
+	SignedTransaction string `json:"signed_transaction"`
 }
 
 func (q *Queries) MarkEscrowSubmitted(ctx context.Context, arg MarkEscrowSubmittedParams) (PostEscrow, error) {
-	row := q.db.QueryRow(ctx, markEscrowSubmitted, arg.PostID, arg.Signature, arg.Transaction)
+	row := q.db.QueryRow(ctx, markEscrowSubmitted,
+		arg.PostID,
+		arg.Signature,
+		arg.Transaction,
+		arg.SignedTransaction,
+	)
 	var i PostEscrow
 	err := row.Scan(
 		&i.PostID,
@@ -224,6 +234,8 @@ func (q *Queries) MarkEscrowSubmitted(ctx context.Context, arg MarkEscrowSubmitt
 		&i.StorageLamports,
 		&i.State,
 		&i.UpdatedAt,
+		&i.AgreementVersion,
+		&i.SignedTransaction,
 	)
 	return i, err
 }
@@ -293,16 +305,17 @@ func (q *Queries) MarkPostSettled(ctx context.Context, arg MarkPostSettledParams
 }
 
 const savePostEscrow = `-- name: SavePostEscrow :one
-INSERT INTO post_escrows (post_id, address, program_id, reviewer, network, transaction, last_valid_block_height, fee_lamports, storage_lamports)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO post_escrows (post_id, address, program_id, reviewer, network, transaction, last_valid_block_height, fee_lamports, storage_lamports, agreement_version)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (post_id) DO UPDATE SET transaction = EXCLUDED.transaction,
     last_valid_block_height = EXCLUDED.last_valid_block_height,
     fee_lamports = EXCLUDED.fee_lamports, storage_lamports = EXCLUDED.storage_lamports,
-    signature = '', state = 'prepared', updated_at = NOW()
+    agreement_version = EXCLUDED.agreement_version,
+    signature = '', signed_transaction = '', state = 'prepared', updated_at = NOW()
 WHERE post_escrows.state IN ('failed', 'expired')
     AND post_escrows.address = EXCLUDED.address AND post_escrows.program_id = EXCLUDED.program_id
     AND post_escrows.reviewer = EXCLUDED.reviewer AND post_escrows.network = EXCLUDED.network
-RETURNING post_id, address, program_id, reviewer, network, transaction, signature, last_valid_block_height, fee_lamports, storage_lamports, state, updated_at
+RETURNING post_id, address, program_id, reviewer, network, transaction, signature, last_valid_block_height, fee_lamports, storage_lamports, state, updated_at, agreement_version, signed_transaction
 `
 
 type SavePostEscrowParams struct {
@@ -315,6 +328,7 @@ type SavePostEscrowParams struct {
 	LastValidBlockHeight int64  `json:"last_valid_block_height"`
 	FeeLamports          int64  `json:"fee_lamports"`
 	StorageLamports      int64  `json:"storage_lamports"`
+	AgreementVersion     int32  `json:"agreement_version"`
 }
 
 func (q *Queries) SavePostEscrow(ctx context.Context, arg SavePostEscrowParams) (PostEscrow, error) {
@@ -328,6 +342,7 @@ func (q *Queries) SavePostEscrow(ctx context.Context, arg SavePostEscrowParams) 
 		arg.LastValidBlockHeight,
 		arg.FeeLamports,
 		arg.StorageLamports,
+		arg.AgreementVersion,
 	)
 	var i PostEscrow
 	err := row.Scan(
@@ -343,6 +358,8 @@ func (q *Queries) SavePostEscrow(ctx context.Context, arg SavePostEscrowParams) 
 		&i.StorageLamports,
 		&i.State,
 		&i.UpdatedAt,
+		&i.AgreementVersion,
+		&i.SignedTransaction,
 	)
 	return i, err
 }
