@@ -17,13 +17,20 @@ func (m model) openPosts(own bool) (tea.Model, tea.Cmd) {
 	m.picker.open = false
 	m.fundingConfirm = false
 	m.escrow = api.Escrow{}
+	m.dashboard.focus = dashboardTasks
+	m.dashboard.filterOpen = false
+	m.dashboard.generation++
 
 	m.screen = feedScreen
 	if own {
 		m.screen = myPostsScreen
 	}
 
-	return m, m.fetchPosts()
+	if m.dashboard.ready {
+		m.applyDashboardPosts()
+	}
+
+	return m, m.fetchDashboard()
 }
 
 func (m *model) setPostError(err error) {
@@ -33,6 +40,8 @@ func (m *model) setPostError(err error) {
 	if errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized {
 		m.stopWorkspace()
 		m.token, m.user, m.posts = "", api.User{}, nil
+		m.walletAddress = ""
+		m.clearDashboard()
 		m.profileOpen = false
 		m.picker.open = false
 		m.err = errors.New("Your session expired. Sign in again.")
@@ -40,6 +49,10 @@ func (m *model) setPostError(err error) {
 }
 
 func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.onDashboard() {
+		return m.updateDashboard(msg)
+	}
+
 	if m.screen == workspaceScreen {
 		return m.updateWorkspace(msg)
 	}
@@ -119,39 +132,43 @@ func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.postInfo()
 		}
 
-		return m, m.fetchPosts()
+		return m, m.fetchDashboard()
 	case "esc":
 		if m.screen == detailScreen {
-			m.screen = feedScreen
-			if m.own {
-				m.screen = myPostsScreen
-			}
+			return m.openPosts(m.own)
 		}
 	case "up", "k":
 		if m.screen == detailScreen {
 			m.scroll = max(0, m.scroll-1)
 		} else {
-			m.selected = max(0, m.selected-1)
+			m.movePost(-1)
 		}
 	case "down", "j":
 		if m.screen == detailScreen {
-			_, height := m.dimensions()
-			m.scroll = min(max(0, len(m.detailRows())+1-(height-10)), m.scroll+1)
+			m.scroll = min(m.detailScrollMax(), m.scroll+1)
 		} else {
-			m.selected = min(max(0, len(m.posts)-1), m.selected+1)
+			m.movePost(1)
 		}
 	case "left", "[":
 		if m.screen == feedScreen {
 			m.level = (m.level + 2) % 3
 			return m.openPosts(false)
 		}
+
+		if m.screen == myPostsScreen {
+			return m.filterTasks((m.taskFilter + len(taskFilters) - 1) % len(taskFilters)), nil
+		}
 	case "right", "]":
 		if m.screen == feedScreen {
 			m.level = (m.level + 1) % 3
 			return m.openPosts(false)
 		}
+
+		if m.screen == myPostsScreen {
+			return m.filterTasks((m.taskFilter + 1) % len(taskFilters)), nil
+		}
 	case "enter":
-		if len(m.posts) != 0 {
+		if len(m.listIndices()) != 0 {
 			return m.openDetail()
 		}
 	case "a":

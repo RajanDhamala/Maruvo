@@ -6,15 +6,16 @@ import (
 )
 
 type Escrow struct {
-	State           string `json:"state"`
-	Address         string `json:"address"`
-	ProgramID       string `json:"program_id"`
-	Reviewer        string `json:"reviewer"`
-	Network         string `json:"network"`
-	Signature       string `json:"signature"`
-	Transaction     string `json:"transaction"`
-	FeeLamports     int64  `json:"fee_lamports"`
-	StorageLamports int64  `json:"storage_lamports"`
+	AgreementVersion int32  `json:"agreement_version"`
+	State            string `json:"state"`
+	Address          string `json:"address"`
+	ProgramID        string `json:"program_id"`
+	Reviewer         string `json:"reviewer"`
+	Network          string `json:"network"`
+	Signature        string `json:"signature"`
+	Transaction      string `json:"transaction"`
+	FeeLamports      int64  `json:"fee_lamports"`
+	StorageLamports  int64  `json:"storage_lamports"`
 }
 
 type PostInfo struct {

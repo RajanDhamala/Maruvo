@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +49,21 @@ func safeName(name string) bool {
 func taskInputs(workspace api.Workspace) ([]api.WorkspaceFile, bool) {
 	inputs := []api.WorkspaceFile{}
 
-	for _, name := range workspace.Post.InputFiles {
+	names := workspace.Post.InputFiles
+	if len(names) == 0 {
+		seen := map[string]bool{}
+		for _, file := range workspace.Files {
+			if file.UploadedBy == workspace.Post.UserID &&
+				(file.Purpose == "input" || file.Purpose == "shared") && !seen[file.Name] {
+				names = append(names, file.Name)
+				seen[file.Name] = true
+			}
+		}
+
+		sort.Strings(names)
+	}
+
+	for _, name := range names {
 		var found api.WorkspaceFile
 		for _, file := range workspace.Files {
 			if file.Name == name && file.UploadedBy == workspace.Post.UserID &&
@@ -91,9 +106,9 @@ func awaitTask(
 			return workReady
 		}
 
-		if strings.TrimSpace(workspace.Post.Description) == "" || len(workspace.Post.ExpectedOutputs) == 0 {
+		if strings.TrimSpace(workspace.Post.Description) == "" {
 			return errors.New(
-				"task needs instructions and expected output filenames before using an agent runner",
+				"task needs a description before using an agent runner",
 			)
 		}
 
@@ -123,13 +138,21 @@ func awaitTask(
 		return ready, err
 	}
 
-	err := watch(ctx, client, token, postID, ready.State.LastEventID, func(frame api.StreamFrame) error {
-		if frame.Event == "workspace.event" || frame.Event == "connected" {
-			return check()
-		}
+	err := watch(
+		ctx,
+		client,
+		token,
+		postID,
+		ready.State.LastEventID,
+		ready.Cursor,
+		func(frame api.StreamFrame) error {
+			if frame.Event == "workspace.event" || frame.Event == "connected" {
+				return check()
+			}
 
-		return nil
-	})
+			return nil
+		},
+	)
 	if err == workReady {
 		return ready, nil
 	}
@@ -255,6 +278,10 @@ func executeTask(
 		PreviousDelivery:   []artifact{},
 		OutputDirectory:    filepath.Join(runDir, "output"),
 	}
+	if len(workspace.Post.ExpectedOutputs) == 0 {
+		task.Instructions = "Complete task.description using the provided inputs. Follow task.acceptance_criteria (the expected result) and review_note. Write the result and a delivery summary as UTF-8 text in output_directory/result.txt, at most 4,000 characters and 16,000 bytes. Maruvo submits this text for human review. Additional files are shared only through explicit send-file tool calls; other output files and logs are not uploaded automatically. Exit nonzero if the task cannot be completed. Invoke cli with cli_arguments followed by chat, files, send-file, or download; tools lists the commands."
+	}
+
 	download := func(file api.WorkspaceFile, folder string) (artifact, error) {
 		if !safeName(file.Name) {
 			return artifact{}, errors.New("unsafe shared filename")
@@ -362,6 +389,23 @@ func executeTask(
 	}
 	defer root.Close()
 
+	note := "Agent delivery: " + strings.Join(workspace.Post.ExpectedOutputs, ", ")
+	if len(workspace.Post.ExpectedOutputs) == 0 {
+		content, err := readOutput(root, "result.txt")
+		if err != nil {
+			return err
+		}
+
+		note = strings.TrimSpace(string(content))
+		if note == "" || !utf8.ValidString(note) || utf8.RuneCountInString(note) > 4000 ||
+			len(content) > 16000 ||
+			strings.IndexFunc(note, func(r rune) bool {
+				return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t'
+			}) >= 0 {
+			return errors.New("result.txt must contain UTF-8 text, at most 4,000 characters and 16,000 bytes")
+		}
+	}
+
 	outputs := []api.WorkspaceFile{}
 
 	for _, name := range workspace.Post.ExpectedOutputs {
@@ -382,8 +426,6 @@ func executeTask(
 	for _, file := range outputs {
 		ids = append(ids, file.ID)
 	}
-
-	note := "Agent delivery: " + strings.Join(workspace.Post.ExpectedOutputs, ", ")
 
 	inputIDs := []string{}
 	for _, file := range inputs {

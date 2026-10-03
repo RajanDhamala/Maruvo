@@ -78,3 +78,24 @@ func TestStalePreparedDecisionCannotConfirmOrSign(t *testing.T) {
 		t.Fatal("a stale delivery must be rejected before loading a key or signing")
 	}
 }
+
+func TestRefundWithoutDeliveryStillRequiresReviewerConfirmation(t *testing.T) {
+	m := reviewerModel()
+
+	m.workspace.State = api.WorkspaceState{ReviewState: "working"}
+	if !m.canReviewAction("x") || m.canReviewAction("a") || m.canReviewAction("e") {
+		t.Fatal("only refund is available before delivery")
+	}
+
+	next, cmd := m.updateWorkspace(tea.KeyPressMsg{Code: 'x', Text: "x"})
+
+	m = next.(model)
+	if cmd != nil || m.reviewVersion != 0 || m.reviewConfirm || !m.reviewIsCurrent() {
+		t.Fatal("opening refund must not sign or submit")
+	}
+
+	m.workspace.CanReview = false
+	if m.reviewIsCurrent() {
+		t.Fatal("refund requires reviewer authority")
+	}
+}

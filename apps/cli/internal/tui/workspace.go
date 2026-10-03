@@ -105,9 +105,10 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 
 func (m model) connectWorkspace() tea.Cmd {
 	generation, ctx, postID, after := m.workspaceGen, m.workspaceCtx, m.workspace.Post.ID, m.workspace.State.LastEventID
+	cursor := m.workspace.Cursor
 
 	return func() tea.Msg {
-		stream, err := m.client.ConnectWorkspace(ctx, m.token, postID, after)
+		stream, err := m.client.ConnectWorkspace(ctx, m.token, postID, after, cursor)
 		return workspaceConnected{generation: generation, stream: stream, err: err}
 	}
 }
@@ -120,6 +121,10 @@ func (m model) workspaceConnected(msg workspaceConnected) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		var failure *api.Error
+		if errors.As(msg.err, &failure) && failure.StatusCode == 409 {
+			return m.openWorkspace("")
+		}
+
 		if errors.As(msg.err, &failure) &&
 			(failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404) {
 			m.stopWorkspace()
@@ -185,11 +190,30 @@ func (m model) workspaceFrame(msg workspaceFrame) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
-	if event.PostID != m.workspace.Post.ID || event.ID <= m.workspace.State.LastEventID {
+	if event.PostID != m.workspace.Post.ID {
 		return
 	}
 
-	m.workspace.State.LastEventID = event.ID
+	if event.StreamID != "" {
+		if !api.StreamCursorAfter(event.StreamID, m.workspace.Cursor) {
+			return
+		}
+
+		m.workspace.Cursor = event.StreamID
+		for _, existing := range m.workspace.Events {
+			if existing.StreamID == event.StreamID {
+				return
+			}
+		}
+	}
+
+	if event.ID > 0 {
+		if event.ID <= m.workspace.State.LastEventID {
+			return
+		}
+
+		m.workspace.State.LastEventID = event.ID
+	}
 
 	m.workspace.Events = append(m.workspace.Events, event)
 	if len(m.workspace.Events) > 100 {
@@ -388,9 +412,8 @@ func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 
 		m.workspaceAction, m.workspaceInput, m.err, m.notice = key, textField{limit: 4000}, nil, ""
 	case "a", "x", "e":
-		if !m.workspace.CanReview || m.workspace.State.ReviewState != "submitted" ||
-			m.workspace.Escrow.State != "confirmed" {
-			m.err = errors.New("Only the authorized reviewer can decide on submitted, funded work.")
+		if !m.canReviewAction(key) {
+			m.err = errors.New("Reviewer wallet approval is required; payout needs submitted, funded work.")
 			return m, nil
 		}
 
@@ -491,7 +514,7 @@ func (m model) workspaceLayout() postLayout {
 		case "a":
 			label, buttonLabel = "Approval note · explain why the delivery is accepted", "Prepare payout"
 		case "x":
-			label, buttonLabel = "Refund note · explain why the delivery is rejected", "Prepare refund"
+			label, buttonLabel = "Refund note · explain why escrow should be returned", "Prepare refund"
 		case "e":
 			label, buttonLabel = "Requested changes · tell the worker what to revise", "Request changes"
 		case "d":

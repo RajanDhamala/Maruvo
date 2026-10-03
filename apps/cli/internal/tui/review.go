@@ -18,9 +18,21 @@ type reviewPrepared struct {
 }
 
 func (m model) reviewIsCurrent() bool {
-	return m.workspace.CanReview && m.reviewVersion > 0 &&
-		m.reviewVersion == m.workspace.State.SubmissionVersion &&
-		m.workspace.State.ReviewState == "submitted" && m.workspace.Escrow.State == "confirmed"
+	return m.canReviewAction(m.workspaceAction) && m.reviewVersion == m.workspace.State.SubmissionVersion
+}
+
+func (m model) canReviewAction(action string) bool {
+	if !m.workspace.CanReview || m.workspace.Escrow.State != "confirmed" {
+		return false
+	}
+
+	state := m.workspace.State
+	if action == "x" {
+		return state.ReviewState == "working" || state.ReviewState == "submitted" ||
+			state.ReviewState == "changes_requested"
+	}
+
+	return (action == "a" || action == "e") && state.SubmissionVersion > 0 && state.ReviewState == "submitted"
 }
 
 func (m model) prepareSettlement() (tea.Model, tea.Cmd) {
@@ -188,6 +200,9 @@ func (m model) reviewLayout(l postLayout) postLayout {
 	if m.workspace.CanReview && state.ReviewState == "submitted" && m.workspace.Escrow.State == "confirmed" {
 		l.buttons([]string{"Approve & pay", "Refund", "Request changes"}, []string{"a", "x", "e"})
 		l.footer = "a approve & pay · x refund · e request changes · Esc chat"
+	} else if m.canReviewAction("x") {
+		l.buttons([]string{"Refund", "Chat", "Files"}, []string{"x", "v", "workspace-tab"})
+		l.footer = "x refund · Esc chat · Tab files · ↑↓ scroll · b task"
 	} else {
 		l.buttons([]string{"Chat", "Files"}, []string{"v", "workspace-tab"})
 		l.footer = "Esc chat · Tab files · ↑↓ scroll · b task"

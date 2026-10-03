@@ -20,7 +20,7 @@ func (m model) View() tea.View {
 	s := fmt.Sprintf("Maruvo\n\nConnection demo\nAPI: %s\nMessage: %s\n\n", m.client.URL(), m.message)
 	switch {
 	case m.loggingIn:
-		s += "Finish Google sign-in in your browser.\nWaiting for the login response...\n"
+		s += "Finish sign-in in your browser.\nWaiting for the login response...\n"
 	case m.loading:
 		s += "Sending to Rust through the Go API...\n"
 	case m.err != nil:
@@ -34,33 +34,6 @@ func (m model) View() tea.View {
 	view.AltScreen = true
 
 	return view
-}
-
-func (m model) authView() tea.View {
-	rows := []string{
-		"",
-		"",
-		bold("A place to find work. A place to post it."),
-		"",
-		muted("Sign in with Google to get started."),
-	}
-	footer := "Enter  sign in    r  retry session    q  quit"
-
-	switch {
-	case m.loggingIn:
-		rows = []string{
-			"",
-			"",
-			bold("Continue in your browser."),
-			"",
-			muted("Waiting for Google sign-in to finish..."),
-		}
-		footer = "q  quit login"
-	case m.loading:
-		rows = []string{"", "", muted("Checking your saved session...")}
-	}
-
-	return m.frame(rows, footer)
 }
 
 func (m model) frame(body []string, footer string) tea.View {
@@ -134,22 +107,45 @@ func (m model) frame(body []string, footer string) tea.View {
 		lines = append(lines, strings.Repeat(" ", m.contentX())+line)
 	}
 
+	status := ""
+
+	if m.screen != workspaceScreen && !m.picker.open && !m.profileOpen {
+		if m.err != nil {
+			status = warning(plain(m.err.Error()))
+		} else if m.notice != "" {
+			status = accent(plain(m.notice))
+		} else if m.token != "" && !m.user.GitHubConnected && m.user.GitHubLogin == "" &&
+			(m.screen == feedScreen || m.screen == myPostsScreen) {
+			status = accent("Connect GitHub to your profile: Ctrl+g")
+		}
+	}
+
 	if m.picker.open {
 		footer = muted("Arrows select   PgUp/PgDn month   Tab time   Enter apply   Esc cancel")
 		if width < 78 {
 			footer = muted("Arrows · Tab time · Enter apply · Esc cancel")
 		}
 	} else if m.profileOpen {
-		footer = muted("Click Log out / Enter   Esc close profile")
-	} else if m.err != nil {
+		footer = "w wallet · Enter log out · Esc close"
+		if !m.user.GitHubConnected && m.user.GitHubLogin == "" {
+			footer = "g connect GitHub · " + footer
+		}
+
+		footer = muted(footer)
+	} else if m.err != nil && m.screen == workspaceScreen {
 		footer = warning(plain(m.err.Error()))
-	} else if m.notice != "" {
+	} else if m.notice != "" && m.screen == workspaceScreen {
 		footer = accent(m.notice) + "   " + muted(footer)
 	} else {
 		footer = muted(footer)
 	}
 
-	lines = append(lines, "", "  "+divider, "  "+ansi.Truncate(footer, inner, "…"), "")
+	statusLine := ""
+	if status != "" {
+		statusLine = "  " + ansi.Truncate(status, inner, "…")
+	}
+
+	lines = append(lines, statusLine, "  "+divider, "  "+ansi.Truncate(footer, inner, "…"), "")
 	if m.profileOpen && m.token != "" {
 		m.drawProfile(lines)
 	}

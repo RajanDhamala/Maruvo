@@ -23,7 +23,7 @@ func (a *arguments) Set(value string) error { *a = append(*a, value); return nil
 func Run(ctx context.Context, client *api.Client, profile string, args []string, out, log io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(
-			"agent commands: tools, login, feed, tasks, create, task, accept, chat, message, files, send-file, upload, download, submit, events, run",
+			"agent commands: tools, login, link-github, feed, tasks, create, task, accept, chat, message, files, send-file, upload, download, submit, events, run",
 		)
 	}
 
@@ -32,13 +32,16 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	flags.SetOutput(log)
 	postID := flags.Int64("post", 0, "task ID")
 	level := flags.String("level", "easy", "feed difficulty")
+	provider := flags.String("provider", "github", "login provider: github or google")
 	brief := flags.String("brief", "", "task JSON file")
 	file := flags.String("file", "", "local file to upload")
 	purpose := flags.String("purpose", "shared", "input, output, or shared")
 	fileID := flags.String("id", "", "shared file ID")
 	destination := flags.String("to", "", "new download path")
 	text := flags.String("text", "", "message or delivery note")
+	messageID := flags.String("message-id", "", "message ID to reuse when retrying the same chat message")
 	after := flags.Int64("after", 0, "last received event ID")
+	cursor := flags.String("cursor", "", "last received Redis stream ID")
 	directory := flags.String("dir", "./maruvo-work", "local task working directory")
 	executable := flags.String("exec", "", "agent harness executable; receives task JSON on stdin")
 	timeout := flags.Duration(
@@ -65,7 +68,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	}
 
 	if action == "login" {
-		token, err := auth.Login(ctx, client)
+		token, err := auth.LoginWithProvider(ctx, client, *provider)
 		if err != nil {
 			return err
 		}
@@ -89,6 +92,19 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	user, err := client.Me(ctx, token)
 	if err != nil {
 		return err
+	}
+
+	if action == "link-github" {
+		linked, err := auth.LinkGitHub(ctx, client, token)
+		if err != nil {
+			return err
+		}
+
+		if err = auth.SaveSession(client.URL(), linked, profile); err != nil {
+			return err
+		}
+
+		return encode(map[string]string{"status": "github_connected", "profile": profile})
 	}
 
 	switch action {
@@ -159,7 +175,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 
 		return encode(post)
 	case "message":
-		if err = client.SendMessage(ctx, token, *postID, *text); err != nil {
+		if err = client.SendMessage(ctx, token, *postID, *text, *messageID); err != nil {
 			return err
 		}
 	case "chat":
@@ -168,7 +184,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		}
 
 		if *text != "" {
-			if err = client.SendMessage(ctx, token, *postID, *text); err != nil {
+			if err = client.SendMessage(ctx, token, *postID, *text, *messageID); err != nil {
 				return err
 			}
 
@@ -183,7 +199,9 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		messages := []api.WorkspaceEvent{}
 
 		for _, event := range workspace.Events {
-			if event.Kind == "message" && event.ID > *after {
+			if event.Kind == "message" &&
+				(event.ID == 0 || event.ID > *after) &&
+				(*cursor == "" || api.StreamCursorAfter(event.StreamID, *cursor)) {
 				messages = append(messages, event)
 			}
 		}
@@ -192,6 +210,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 			map[string]any{
 				"post_id":       *postID,
 				"last_event_id": workspace.State.LastEventID,
+				"cursor":        workspace.Cursor,
 				"messages":      messages,
 			},
 		)
@@ -256,6 +275,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 			token,
 			*postID,
 			*after,
+			*cursor,
 			func(frame api.StreamFrame) error { return encode(frame) },
 		)
 	case "run":
@@ -292,10 +312,11 @@ func watch(
 	client *api.Client,
 	token string,
 	postID, after int64,
+	cursor string,
 	consume func(api.StreamFrame) error,
 ) error {
 	for ctx.Err() == nil {
-		stream, err := client.ConnectWorkspace(ctx, token, postID, after)
+		stream, err := client.ConnectWorkspace(ctx, token, postID, after, cursor)
 		if err == nil {
 			for {
 				frame, readErr := stream.Read()
@@ -304,18 +325,19 @@ func watch(
 					break
 				}
 
+				if err = consume(frame); err != nil {
+					stream.Close()
+					return err
+				}
+
 				if frame.Event == "workspace.event" {
 					var event api.WorkspaceEvent
 					if err = json.Unmarshal(frame.Data, &event); err != nil {
 						break
 					}
 
-					after = event.ID
-				}
-
-				if err = consume(frame); err != nil {
-					stream.Close()
-					return err
+					after = max(after, event.ID)
+					cursor = event.StreamID
 				}
 			}
 
@@ -323,6 +345,17 @@ func watch(
 		}
 
 		var failure *api.Error
+		if errors.As(err, &failure) && failure.StatusCode == 409 {
+			workspace, reloadErr := client.Workspace(ctx, token, postID)
+			if reloadErr != nil {
+				return reloadErr
+			}
+
+			after, cursor = workspace.State.LastEventID, workspace.Cursor
+
+			continue
+		}
+
 		if errors.As(err, &failure) &&
 			(failure.StatusCode == 400 || failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404) {
 			return err

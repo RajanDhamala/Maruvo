@@ -32,6 +32,11 @@ type model struct {
 	user                   api.User
 	token                  string
 	loggingIn              bool
+	authProvider           string
+	homeFocus              int
+	homeInput              textField
+	homePath               string
+	dashboard              dashboardState
 	profileOpen            bool
 	walletAddress          string
 	escrow                 api.Escrow
@@ -42,8 +47,10 @@ type model struct {
 	posts                  []api.Post
 	selected               int
 	level                  int
+	taskFilter             int
 	own                    bool
 	form                   postForm
+	descriptionSearchSeq   uint64
 	picker                 deadlinePicker
 	notice                 string
 	deleting               bool
@@ -71,14 +78,15 @@ type model struct {
 
 func Run(ctx context.Context, client *api.Client, message string, demo bool, profile string) error {
 	final, err := tea.NewProgram(model{
-		ctx:     ctx,
-		client:  client,
-		profile: profile,
-		message: message,
-		loading: true,
-		demo:    demo,
-		width:   80,
-		height:  24,
+		ctx:      ctx,
+		client:   client,
+		profile:  profile,
+		homePath: currentHomePath(),
+		message:  message,
+		loading:  true,
+		demo:     demo,
+		width:    80,
+		height:   24,
 	}).Run()
 	if m, ok := final.(model); ok {
 		m.stopWorkspace()

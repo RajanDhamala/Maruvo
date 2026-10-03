@@ -33,6 +33,10 @@ func commandTool(name, description string, required []string, properties map[str
 func toolList() []tool {
 	post := toolParameter{Type: "integer", Description: "Positive task ID"}
 	after := toolParameter{Type: "integer", Description: "Last received event ID; defaults to 0"}
+	cursor := toolParameter{
+		Type:        "string",
+		Description: "Last received stream ID; takes precedence over after",
+	}
 
 	return []tool{
 		commandTool("feed", "Find open tasks at a difficulty level.", nil, map[string]toolParameter{
@@ -73,9 +77,14 @@ func toolList() []tool {
 			"Read messages from the latest 100 workspace events, or send a message when text is provided.",
 			[]string{"post"},
 			map[string]toolParameter{
-				"post":  post,
-				"after": after,
-				"text":  {Type: "string", Description: "Optional message to send; up to 4000 characters"},
+				"post":   post,
+				"after":  after,
+				"cursor": cursor,
+				"text": {
+					Type:        "string",
+					Description: "Optional message to send; up to 4000 characters",
+				},
+				"message-id": {Type: "string", Description: "Reuse this ID and text when retrying a message"},
 			},
 		),
 		commandTool(
@@ -120,7 +129,7 @@ func toolList() []tool {
 			"events",
 			"Stream workspace events as NDJSON, with automatic reconnect and replay. Run as a cancellable process.",
 			[]string{"post"},
-			map[string]toolParameter{"post": post, "after": after},
+			map[string]toolParameter{"post": post, "after": after, "cursor": cursor},
 		),
 		commandTool(
 			"run",

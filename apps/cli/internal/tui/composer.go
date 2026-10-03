@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +23,8 @@ type chatComposer struct {
 	completing  bool
 	sequence    uint64
 	fileError   string
+	messageID   string
+	messageText string
 }
 
 type localFilesFound struct {
@@ -221,6 +224,7 @@ func (m model) sendChat() (tea.Model, tea.Cmd) {
 		}
 
 		m.composer.draft = textField{limit: 4000}
+		m.composer.messageID, m.composer.messageText = "", ""
 
 		return m.workspaceCommand(action)
 	}
@@ -235,7 +239,13 @@ func (m model) sendChat() (tea.Model, tea.Cmd) {
 	}
 
 	files := append([]localFile(nil), m.composer.attachments...)
+
 	generation, ctx, postID := m.workspaceGen, m.workspaceCtx, m.workspace.Post.ID
+	if text != "" && (m.composer.messageID == "" || m.composer.messageText != text) {
+		m.composer.messageID, m.composer.messageText = rand.Text(), text
+	}
+
+	messageID := m.composer.messageID
 
 	purpose := "shared"
 	if m.isPoster(m.workspace.Post) {
@@ -260,7 +270,7 @@ func (m model) sendChat() (tea.Model, tea.Cmd) {
 		}
 
 		if text != "" {
-			result.err = m.client.SendMessage(ctx, m.token, postID, text)
+			result.err = m.client.SendMessage(ctx, m.token, postID, text, messageID)
 		}
 
 		return result
@@ -294,6 +304,7 @@ func (m model) chatSent(msg chatSent) (tea.Model, tea.Cmd) {
 
 	if msg.err == nil {
 		m.composer.draft = textField{limit: 4000}
+		m.composer.messageID, m.composer.messageText = "", ""
 		m.notice = "Sent."
 	}
 

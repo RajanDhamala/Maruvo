@@ -6,11 +6,6 @@ import (
 	"github.com/rajandhamala/Maruvo/cli/internal/wallet"
 )
 
-type postsResult struct {
-	posts []api.Post
-	err   error
-}
-
 type postChanged struct {
 	post      api.Post
 	created   bool
@@ -18,22 +13,6 @@ type postChanged struct {
 	accepted  bool
 	deletedID int64
 	err       error
-}
-
-func (m model) fetchPosts() tea.Cmd {
-	return func() tea.Msg {
-		var (
-			posts []api.Post
-			err   error
-		)
-		if m.own {
-			posts, err = m.client.OwnPosts(m.ctx, m.token)
-		} else {
-			posts, err = m.client.Feed(m.ctx, m.token, levels[m.level])
-		}
-
-		return postsResult{posts: posts, err: err}
-	}
 }
 
 func (m model) createPost(payload api.CreatePostPayload) tea.Cmd {

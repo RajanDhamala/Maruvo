@@ -85,6 +85,7 @@ func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
 	if post.AcceptedBy == nil || post.CostLamports < 0 || plan.ProgramID != ProgramID ||
 		(plan.Network != "devnet" && plan.Network != "localnet") ||
 		plan.State != "prepared" ||
+		(plan.AgreementVersion != 1 && plan.AgreementVersion != 2) ||
 		w.Address() != post.PosterWallet {
 		return "", errors.New("wallet, network, or escrow program does not match this funding request")
 	}
@@ -120,20 +121,8 @@ func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
 
 	instruction := rest[7:]
 	discriminator := sha256.Sum256([]byte("global:fund"))
-	terms := fmt.Sprintf(
-		"maruvo-escrow-v1\n%d\n%d\n%d\n%s\n%s\n%d\n%s\n%s\n%s",
-		post.ID,
-		post.UserID,
-		*post.AcceptedBy,
-		post.PosterWallet,
-		post.WorkerWallet,
-		post.CostLamports,
-		post.EndTime.UTC().Format(time.RFC3339Nano),
-		post.Level,
-		post.Title,
-	)
 
-	hash := sha256.Sum256([]byte(terms))
+	hash := agreementHash(post, plan.AgreementVersion)
 	if !bytes.Equal(instruction[:8], discriminator[:8]) ||
 		binary.LittleEndian.Uint64(instruction[8:16]) != uint64(post.ID) ||
 		binary.LittleEndian.Uint64(instruction[16:24]) != uint64(post.CostLamports) ||
@@ -151,4 +140,31 @@ func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
 	copy(data[1:65], ed25519.Sign(w.key, message))
 
 	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func agreementHash(post api.Post, version int32) [32]byte {
+	terms := fmt.Sprintf(
+		"maruvo-escrow-v1\n%d\n%d\n%d\n%s\n%s\n%d\n%s\n%s\n%s",
+		post.ID,
+		post.UserID,
+		*post.AcceptedBy,
+		post.PosterWallet,
+		post.WorkerWallet,
+		post.CostLamports,
+		post.EndTime.UTC().Format(time.RFC3339Nano),
+		post.Level,
+		post.Title,
+	)
+	if version == 2 {
+		data, _ := json.Marshal([]any{
+			"maruvo-escrow-v2", post.ID, post.UserID, *post.AcceptedBy,
+			post.PosterWallet, post.WorkerWallet, post.CostLamports,
+			post.EndTime.UTC().Format(time.RFC3339Nano), post.Level, post.Title,
+			post.Description, post.AcceptanceCriteria,
+			append([]string{}, post.InputFiles...), append([]string{}, post.ExpectedOutputs...),
+		})
+		terms = string(data)
+	}
+
+	return sha256.Sum256([]byte(terms))
 }

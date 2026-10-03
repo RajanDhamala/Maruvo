@@ -8,24 +8,37 @@ import (
 	"time"
 )
 
+const MaxDescriptionBytes = 32 << 10
+const MaxDescriptionCharacters = 12000
+
+type PublicUser struct {
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	Avatar      string `json:"avatar"`
+	GitHubLogin string `json:"github_login"`
+	GitHubURL   string `json:"github_url"`
+}
+
 type Post struct {
-	Description        string     `json:"description"`
-	AcceptanceCriteria string     `json:"acceptance_criteria"`
-	InputFiles         []string   `json:"input_files"`
-	ExpectedOutputs    []string   `json:"expected_outputs"`
-	ID                 int64      `json:"id"`
-	UserID             int64      `json:"user_id"`
-	Title              string     `json:"title"`
-	CostLamports       int64      `json:"cost_lamports"`
-	EndTime            time.Time  `json:"end_time"`
-	Status             string     `json:"status"`
-	Level              string     `json:"level"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	AcceptedBy         *int64     `json:"accepted_by"`
-	AcceptedAt         *time.Time `json:"accepted_at"`
-	PosterWallet       string     `json:"poster_wallet"`
-	WorkerWallet       string     `json:"worker_wallet"`
+	Poster             *PublicUser `json:"poster"`
+	Worker             *PublicUser `json:"worker"`
+	Description        string      `json:"description"`
+	AcceptanceCriteria string      `json:"acceptance_criteria"`
+	InputFiles         []string    `json:"input_files"`
+	ExpectedOutputs    []string    `json:"expected_outputs"`
+	ID                 int64       `json:"id"`
+	UserID             int64       `json:"user_id"`
+	Title              string      `json:"title"`
+	CostLamports       int64       `json:"cost_lamports"`
+	EndTime            time.Time   `json:"end_time"`
+	Status             string      `json:"status"`
+	Level              string      `json:"level"`
+	CreatedAt          time.Time   `json:"created_at"`
+	UpdatedAt          time.Time   `json:"updated_at"`
+	AcceptedBy         *int64      `json:"accepted_by"`
+	AcceptedAt         *time.Time  `json:"accepted_at"`
+	PosterWallet       string      `json:"poster_wallet"`
+	WorkerWallet       string      `json:"worker_wallet"`
 }
 
 type CreatePostPayload struct {

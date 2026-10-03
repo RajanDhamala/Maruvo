@@ -22,10 +22,27 @@ type loginCallback struct {
 }
 
 func Login(ctx context.Context, client *api.Client) (string, error) {
-	return login(ctx, client, OpenBrowser)
+	return LoginWithProvider(ctx, client, "github")
 }
 
-func login(ctx context.Context, client *api.Client, openBrowser func(string) error) (string, error) {
+func LoginWithProvider(ctx context.Context, client *api.Client, provider string) (string, error) {
+	return login(ctx, client, provider, "", OpenBrowser)
+}
+
+func LinkGitHub(ctx context.Context, client *api.Client, token string) (string, error) {
+	return login(ctx, client, "github", token, OpenBrowser)
+}
+
+func login(
+	ctx context.Context,
+	client *api.Client,
+	provider, linkToken string,
+	openBrowser func(string) error,
+) (string, error) {
+	if provider != "github" && provider != "google" {
+		return "", errors.New("login provider must be github or google")
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
@@ -62,7 +79,7 @@ func login(ctx context.Context, client *api.Client, openBrowser func(string) err
 
 		if r.Host != listener.Addr().String() ||
 			subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(state)) != 1 {
-			http.Error(w, "invalid login state", http.StatusBadRequest)
+			writeLoginPage(w, http.StatusBadRequest, true)
 			return
 		}
 
@@ -71,18 +88,17 @@ func login(ctx context.Context, client *api.Client, openBrowser func(string) err
 		}
 
 		if message := r.URL.Query().Get("error"); message != "" {
-			result.err = fmt.Errorf("Google login: %s", message)
+			result.err = fmt.Errorf("%s login: %s", provider, message)
 		} else if result.code == "" {
-			http.Error(w, "missing login code", http.StatusBadRequest)
+			writeLoginPage(w, http.StatusBadRequest, true)
 			return
 		}
 
 		select {
 		case results <- result:
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintln(w, "Login response received. Return to the Maruvo terminal.")
+			writeLoginPage(w, http.StatusOK, result.err != nil)
 		default:
-			http.Error(w, "login already received", http.StatusConflict)
+			writeLoginPage(w, http.StatusConflict, true)
 		}
 	})
 
@@ -98,7 +114,7 @@ func login(ctx context.Context, client *api.Client, openBrowser func(string) err
 		serverErrors <- server.Serve(listener)
 	}()
 
-	loginURL, err := url.Parse(client.LoginURL())
+	loginURL, err := url.Parse(client.LoginURL(provider))
 	if err != nil {
 		return "", err
 	}
@@ -112,8 +128,17 @@ func login(ctx context.Context, client *api.Client, openBrowser func(string) err
 	query.Set("cli_state", state)
 
 	loginURL.RawQuery = query.Encode()
-	if err := openBrowser(loginURL.String()); err != nil {
-		return "", fmt.Errorf("open Google login: %w", err)
+
+	browserURL := loginURL.String()
+	if linkToken != "" {
+		browserURL, err = client.GitHubLinkURL(ctx, linkToken, callbackURL, challenge, state)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if err := openBrowser(browserURL); err != nil {
+		return "", fmt.Errorf("open %s login: %w", provider, err)
 	}
 
 	select {
@@ -127,7 +152,7 @@ func login(ctx context.Context, client *api.Client, openBrowser func(string) err
 		return "", fmt.Errorf("login callback stopped: %w", err)
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", errors.New("Google login timed out; try again")
+			return "", fmt.Errorf("%s login timed out; try again", provider)
 		}
 
 		return "", ctx.Err()

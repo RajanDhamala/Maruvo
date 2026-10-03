@@ -6,13 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 type User struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Avatar   string `json:"avatar"`
+	ID              string `json:"id"`
+	Username        string `json:"username"`
+	Email           string `json:"email"`
+	Avatar          string `json:"avatar"`
+	GitHubLogin     string `json:"github_login"`
+	GitHubURL       string `json:"github_url"`
+	GoogleConnected bool   `json:"google_connected"`
+	GitHubConnected bool   `json:"github_connected"`
 }
 
 func (c *Client) ExchangeCLICode(ctx context.Context, code, verifier string) (string, error) {
@@ -42,8 +47,30 @@ func (c *Client) ExchangeCLICode(ctx context.Context, code, verifier string) (st
 	return response.Token, nil
 }
 
-func (c *Client) LoginURL() string {
-	return c.baseURL + "/oauth/google"
+func (c *Client) LoginURL(provider string) string {
+	return c.baseURL + "/oauth/" + provider
+}
+
+func (c *Client) GitHubLinkURL(
+	ctx context.Context,
+	token, redirect, challenge, state string,
+) (string, error) {
+	var response struct {
+		URL string `json:"url"`
+	}
+
+	err := c.requestJSON(ctx, http.MethodPost, "/oauth/github/link", token, map[string]string{
+		"cli_redirect_uri": redirect, "code_challenge": challenge, "cli_state": state,
+	}, &response)
+	if err != nil {
+		return "", err
+	}
+
+	if !strings.HasPrefix(response.URL, "/oauth/github?request=") {
+		return "", fmt.Errorf("Go API returned an invalid GitHub connection URL")
+	}
+
+	return c.baseURL + response.URL, nil
 }
 
 func (c *Client) Me(ctx context.Context, token string) (User, error) {
@@ -52,7 +79,7 @@ func (c *Client) Me(ctx context.Context, token string) (User, error) {
 		return user, err
 	}
 
-	if user.Email == "" {
+	if user.ID == "" || user.Username == "" {
 		return user, fmt.Errorf("Go API returned an incomplete user profile")
 	}
 

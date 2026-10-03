@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 )
 
 type WorkspaceEvent struct {
+	StreamID  string          `json:"stream_id"`
 	PostID    int64           `json:"post_id"`
 	ID        int64           `json:"id"`
 	ActorID   *int64          `json:"actor_id"`
@@ -48,6 +50,7 @@ type WorkspaceState struct {
 }
 
 type Workspace struct {
+	Cursor     string           `json:"cursor"`
 	Post       Post             `json:"post"`
 	Escrow     Escrow           `json:"escrow"`
 	State      WorkspaceState   `json:"workspace"`
@@ -67,15 +70,40 @@ func (c *Client) Workspace(ctx context.Context, token string, id int64) (Workspa
 	return result, err
 }
 
-func (c *Client) SendMessage(ctx context.Context, token string, id int64, text string) error {
-	return c.requestJSON(
-		ctx,
-		http.MethodPost,
-		workspacePath(id)+"/messages",
-		token,
-		map[string]string{"text": text},
-		nil,
-	)
+func (c *Client) SendMessage(
+	ctx context.Context,
+	token string,
+	id int64,
+	text string,
+	messageID ...string,
+) error {
+	key := ""
+	if len(messageID) > 0 {
+		key = messageID[0]
+	}
+
+	if key == "" {
+		key = rand.Text()
+	}
+
+	for attempt := 0; ; attempt++ {
+		err := c.requestJSON(ctx, http.MethodPost, workspacePath(id)+"/messages", token,
+			map[string]string{"text": text, "message_id": key}, nil)
+
+		var failure *Error
+		if err == nil || attempt == 1 || ctx.Err() != nil ||
+			(errors.As(err, &failure) && failure.StatusCode < 500) {
+			return err
+		}
+
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (c *Client) SubmitWork(ctx context.Context, token string, id int64, note string) error {
@@ -130,6 +158,7 @@ func (c *Client) ConnectWorkspace(
 	ctx context.Context,
 	token string,
 	id, after int64,
+	cursor ...string,
 ) (*WorkspaceStream, error) {
 	u, err := url.Parse(c.baseURL + "/ws")
 	if err != nil {
@@ -148,6 +177,11 @@ func (c *Client) ConnectWorkspace(
 	q := u.Query()
 	q.Set("post_id", strconv.FormatInt(id, 10))
 	q.Set("after", strconv.FormatInt(after, 10))
+
+	if len(cursor) > 0 && cursor[0] != "" {
+		q.Set("cursor", cursor[0])
+	}
+
 	u.RawQuery = q.Encode()
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, Proxy: http.ProxyFromEnvironment}
 
@@ -197,4 +231,23 @@ func (s *WorkspaceStream) Close() {
 		s.stopWatch()
 		s.conn.Close()
 	}
+}
+
+func StreamCursorAfter(a, b string) bool {
+	if a == "" {
+		return false
+	}
+
+	if b == "" {
+		b = "0-0"
+	}
+
+	aTime, aSequence, _ := strings.Cut(a, "-")
+	bTime, bSequence, _ := strings.Cut(b, "-")
+	at, _ := strconv.ParseUint(aTime, 10, 64)
+	bt, _ := strconv.ParseUint(bTime, 10, 64)
+	as, _ := strconv.ParseUint(aSequence, 10, 64)
+	bs, _ := strconv.ParseUint(bSequence, 10, 64)
+
+	return at > bt || (at == bt && as > bs)
 }

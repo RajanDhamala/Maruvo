@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -16,31 +17,49 @@ type textField struct {
 	value      string
 	cursor     int
 	limit      int
+	byteLimit  int
 	digitsOnly bool
+	multiline  bool
 }
 
 type postForm struct {
-	fields [7]textField
-	focus  int
-	level  int
+	fields            [5]textField
+	focus             int
+	level             int
+	importing         bool
+	path              textField
+	fileSearch        descriptionFileSearch
+	descriptionFile   string
+	descriptionSource int
 }
+
+const (
+	descriptionFromFile = iota
+	descriptionFromText
+)
 
 func newPostForm() postForm {
 	deadline := time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04")
 
-	return postForm{fields: [7]textField{
+	return postForm{fields: [5]textField{
 		{limit: 500},
 		{value: "0", cursor: 1, limit: 19, digitsOnly: true},
 		{value: deadline, cursor: len(deadline), limit: 16},
-		{limit: 12000},
-		{limit: 4000},
-		{limit: 3600},
-		{limit: 3600},
+		{limit: api.MaxDescriptionCharacters, byteLimit: api.MaxDescriptionBytes, multiline: true},
+		{limit: 4000, multiline: true},
 	}}
 }
 
 func (f *textField) insert(text string) {
+	if f.multiline {
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	}
+
 	text = strings.Map(func(r rune) rune {
+		if f.multiline && (r == '\n' || r == '\t') {
+			return r
+		}
+
 		if r == '\n' || r == '\r' || r == '\t' {
 			return ' '
 		}
@@ -62,7 +81,8 @@ func (f *textField) insert(text string) {
 	runes := []rune(f.value)
 
 	added := []rune(text)
-	if len(runes)+len(added) > f.limit {
+	if len(runes)+len(added) > f.limit ||
+		(f.byteLimit > 0 && len(f.value)+len(text) > f.byteLimit) {
 		return
 	}
 
@@ -115,21 +135,20 @@ func (f postForm) payload() (api.CreatePostPayload, error) {
 		return api.CreatePostPayload{}, errors.New("Use a future deadline in YYYY-MM-DD HH:MM format.")
 	}
 
-	description := strings.TrimSpace(f.fields[3].value)
-	if description == "" {
-		return api.CreatePostPayload{}, errors.New("Describe the task instructions.")
+	description := f.fields[3].value
+	if f.descriptionSource == descriptionFromFile && f.descriptionFile == "" {
+		return api.CreatePostPayload{}, errors.New("Choose a description file or select Write text.")
 	}
 
-	files := func(value string) []string {
-		result := []string{}
+	if strings.TrimSpace(description) == "" {
+		return api.CreatePostPayload{}, errors.New("Add a description or load a text file.")
+	}
 
-		for _, name := range strings.Split(value, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				result = append(result, name)
-			}
-		}
-
-		return result
+	if len(description) > api.MaxDescriptionBytes ||
+		utf8.RuneCountInString(description) > api.MaxDescriptionCharacters {
+		return api.CreatePostPayload{}, errors.New(
+			"Description must be at most 32 KiB and 12,000 characters.",
+		)
 	}
 
 	return api.CreatePostPayload{
@@ -139,17 +158,30 @@ func (f postForm) payload() (api.CreatePostPayload, error) {
 		Level:              levels[f.level],
 		Description:        description,
 		AcceptanceCriteria: strings.TrimSpace(f.fields[4].value),
-		InputFiles:         files(f.fields[5].value),
-		ExpectedOutputs:    files(f.fields[6].value),
+		InputFiles:         []string{},
+		ExpectedOutputs:    []string{},
 	}, nil
 }
 
 func (m model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.form.importing {
+		return m.updateDescriptionImport(msg)
+	}
+
+	fileDescription := m.form.focus == 3 && m.form.descriptionSource == descriptionFromFile
+	if m.form.focus < len(m.form.fields) && m.form.fields[m.form.focus].multiline && !fileDescription &&
+		m.form.fields[m.form.focus].multilineKey(msg, m.contentWidth()-1) {
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc":
 		return m.openPosts(m.own)
 	case "ctrl+s":
 		return m.submitPost()
+	case "ctrl+o":
+		m = m.openDescriptionImport()
+		return m, m.searchDescriptionFiles()
 	case "tab", "down":
 		m.form.focus = (m.form.focus + 1) % 8
 	case "shift+tab", "up":
@@ -159,13 +191,27 @@ func (m model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.openDeadline(), nil
 		}
 
-		if m.form.focus == 7 {
+		if m.form.focus == 6 {
 			return m.submitPost()
+		}
+
+		if m.form.focus == 7 {
+			return m.openPosts(m.own)
+		}
+
+		if fileDescription {
+			m = m.openDescriptionImport()
+			return m, m.searchDescriptionFiles()
+		}
+
+		if m.form.focus < len(m.form.fields) && m.form.fields[m.form.focus].multiline {
+			m.form.fields[m.form.focus].insert("\n")
+			return m, nil
 		}
 
 		m.form.focus++
 	default:
-		if m.form.focus == 7 {
+		if m.form.focus == 5 {
 			switch msg.String() {
 			case "left":
 				m.form.level = (m.form.level + 2) % 3
@@ -176,12 +222,30 @@ func (m model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if msg.String() == "space" || msg.String() == " " {
 				return m.openDeadline(), nil
 			}
-		} else {
+		} else if m.form.focus < len(m.form.fields) {
+			if fileDescription {
+				if msg.String() == "right" {
+					m = m.editDescription()
+				}
+
+				return m, nil
+			}
+
 			m.form.fields[m.form.focus].key(msg)
 		}
 	}
 
 	return m, nil
+}
+
+func (m model) editDescription() model {
+	m.form.descriptionFile = ""
+	m.form.descriptionSource = descriptionFromText
+	m.form.focus = 3
+	m.form.importing = false
+	m.notice = ""
+
+	return m
 }
 
 func (m model) submitPost() (tea.Model, tea.Cmd) {
@@ -192,6 +256,7 @@ func (m model) submitPost() (tea.Model, tea.Cmd) {
 	}
 
 	m.loading, m.err, m.notice = true, nil, ""
+	m.form.importing = false
 
 	return m, m.createPost(payload)
 }
