@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"time"
 
 	db "github.com/rajandhamala/Maruvo/db/sqlc"
 )
@@ -17,8 +18,9 @@ type publicUser struct {
 
 type publicPost struct {
 	db.Post
-	Poster *publicUser `json:"poster"`
-	Worker *publicUser `json:"worker"`
+	Poster   *publicUser  `json:"poster"`
+	Worker   *publicUser  `json:"worker"`
+	Deadline taskDeadline `json:"deadline"`
 }
 
 func (ctrl *Controller) postProfiles(ctx context.Context, posts []db.Post) ([]publicPost, error) {
@@ -36,6 +38,24 @@ func (ctrl *Controller) postProfiles(ctx context.Context, posts []db.Post) ([]pu
 
 	profiles := map[int64]*publicUser{}
 
+	postIDs := make([]int64, 0, len(posts))
+	for _, post := range posts {
+		postIDs = append(postIDs, post.ID)
+	}
+
+	deadlines := map[int64]taskDeadline{}
+
+	if len(postIDs) > 0 {
+		snapshots, err := ctrl.queries.TaskDeadlineSnapshots(ctx, postIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, snapshot := range snapshots {
+			deadlines[snapshot.ID] = deadlineStatus(snapshot, time.Now())
+		}
+	}
+
 	if len(ids) > 0 {
 		users, err := ctrl.queries.PublicUsers(ctx, ids)
 		if err != nil {
@@ -52,7 +72,12 @@ func (ctrl *Controller) postProfiles(ctx context.Context, posts []db.Post) ([]pu
 	for _, post := range posts {
 		result = append(
 			result,
-			publicPost{Post: post, Poster: profiles[post.UserID], Worker: profiles[post.AcceptedBy.Int64]},
+			publicPost{
+				Post:     post,
+				Poster:   profiles[post.UserID],
+				Worker:   profiles[post.AcceptedBy.Int64],
+				Deadline: deadlines[post.ID],
+			},
 		)
 	}
 

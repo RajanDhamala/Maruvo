@@ -11,6 +11,10 @@ import (
 )
 
 func (m model) formLayout() postLayout {
+	if m.form.timingOpen {
+		return m.timingLayout()
+	}
+
 	width := m.contentWidth()
 
 	l := postLayout{footer: "Tab next · Ctrl+o file · Ctrl+s publish · Esc back"}
@@ -142,6 +146,17 @@ func (m model) formLayout() postLayout {
 
 	anchors[5] = len(l.rows)
 
+	timing := "Fund " + m.form.timings[0].value + "h · Deliver " + m.form.timings[1].value + " · Review " + m.form.timings[2].value + "h"
+	if m.form.timings[1].value == "" {
+		timing = "Fund " + m.form.timings[0].value + "h · Choose delivery date · Review " + m.form.timings[2].value + "h"
+	}
+
+	l.rows = append(l.rows, muted(ansi.Truncate(timing, width, "…")))
+	editTiming := button(" Timings ", m.form.focus == 8)
+	l.hit(0, len(l.rows), ansi.StringWidth(editTiming), 1, "timings", 0)
+	timingTarget := len(l.rows)
+	l.rows = append(l.rows, editTiming+muted(" Ctrl+d"), "")
+
 	label := muted("Difficulty")
 	if m.form.focus == 5 {
 		label = accent("Difficulty")
@@ -160,6 +175,10 @@ func (m model) formLayout() postLayout {
 	l.rows = append(l.rows, line)
 	if m.form.focus >= 5 && !m.form.importing {
 		target = len(l.rows) - 1
+	}
+
+	if m.form.focus == 8 {
+		target = timingTarget
 	}
 
 	available := max(1, m.bodyHeight()-2)

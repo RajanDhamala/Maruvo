@@ -212,6 +212,19 @@ impl EscrowClient {
     }
 
     pub async fn check(&self, request: CheckEscrowRequest) -> Result<String, Status> {
+        self.check_state(request, false).await
+    }
+
+    pub async fn check_recovery(&self, request: CheckEscrowRequest) -> Result<String, Status> {
+        self.verify_network().await?;
+        self.check_state(request, true).await
+    }
+
+    async fn check_state(
+        &self,
+        request: CheckEscrowRequest,
+        recovery: bool,
+    ) -> Result<String, Status> {
         if request.program_id != self.program.to_string()
             || request.reviewer != self.reviewer.to_string()
             || request.network != self.network
@@ -232,12 +245,34 @@ impl EscrowClient {
         if address.to_string() != request.address {
             return Err(Status::invalid_argument("wrong escrow address"));
         }
+        let mut config = json!({"encoding":"base64", "commitment":"confirmed"});
+        let mut expired = false;
+        let mut minimum_slot = 0;
+        if recovery {
+            let epoch = self
+                .rpc("getEpochInfo", json!([{"commitment":"finalized"}]))
+                .await?;
+            let height = epoch["blockHeight"]
+                .as_u64()
+                .ok_or_else(|| Status::unavailable("missing finalized block height"))?;
+            let slot = epoch["absoluteSlot"]
+                .as_u64()
+                .ok_or_else(|| Status::unavailable("missing finalized slot"))?;
+            expired = height > request.last_valid_block_height;
+            minimum_slot = slot;
+            config = json!({"encoding":"base64", "commitment":"finalized", "minContextSlot":slot});
+        }
         let account = self
-            .rpc(
-                "getAccountInfo",
-                json!([request.address, {"encoding":"base64", "commitment":"confirmed"}]),
-            )
+            .rpc("getAccountInfo", json!([request.address, config]))
             .await?;
+        if recovery {
+            let slot = account["context"]["slot"]
+                .as_u64()
+                .ok_or_else(|| Status::unavailable("missing escrow snapshot slot"))?;
+            if slot < minimum_slot || account.get("value").is_none() {
+                return Err(Status::unavailable("invalid or stale escrow snapshot"));
+            }
+        }
         if !account["value"].is_null() {
             let value = &account["value"];
             let data = STANDARD
@@ -279,6 +314,9 @@ impl EscrowClient {
                     ));
                 }
             }
+        }
+        if recovery {
+            return Ok(if expired { "expired" } else { "prepared" }.into());
         }
         if !request.signature.is_empty() {
             Signature::from_str(&request.signature)
@@ -458,3 +496,7 @@ fn decode_transaction(value: &str) -> Result<Transaction, Status> {
         .deserialize(&data)
         .map_err(|_| Status::invalid_argument("invalid transaction"))
 }
+
+#[cfg(test)]
+#[path = "escrow_tests.rs"]
+mod tests;

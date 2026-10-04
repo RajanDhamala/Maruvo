@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -210,6 +211,16 @@ func (c *Controller) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 			"escrow":     funding,
 			"can_review": canReview,
 			"settlement": settlement,
+			"context": taskWorkspaceContext(
+				r.Context(),
+				post,
+				workspace,
+				files,
+				funding,
+				settlement,
+				userID,
+				canReview,
+			),
 		},
 	)
 }
@@ -237,6 +248,10 @@ func (c *Controller) workspaceMutation(
 	defer tx.Rollback(r.Context())
 
 	q := db.New(tx)
+	if err := lockAgent(r.Context(), q); err != nil {
+		workspaceError(w, err)
+		return
+	}
 
 	post, err := q.LockPost(r.Context(), id)
 	if !workspaceAccess(w, r, q, post, err, userID) {
@@ -273,7 +288,7 @@ func appendEvent(
 	kind string,
 	data any,
 ) (int64, error) {
-	payload, err := json.Marshal(data)
+	payload, err := agentData(r.Context(), data)
 	if err != nil {
 		return 0, err
 	}
@@ -337,10 +352,24 @@ func (c *Controller) WorkspaceMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := json.Marshal(payload)
+	data, err := agentData(r.Context(), payload)
 	if err != nil {
 		workspaceError(w, err)
 		return
+	}
+
+	if requestAgent(r.Context()) != nil {
+		tx, err := c.pool.Begin(r.Context())
+		if err != nil {
+			workspaceError(w, err)
+			return
+		}
+		defer tx.Rollback(r.Context())
+
+		if err := lockAgent(r.Context(), db.New(tx)); err != nil {
+			workspaceError(w, err)
+			return
+		}
 	}
 
 	event := db.WorkspaceEvent{
@@ -471,38 +500,9 @@ func (c *Controller) SubmitWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if payload.Inputs != nil {
-			names := post.InputFiles
-			if len(names) == 0 {
-				seen := map[string]bool{}
-				for _, file := range files {
-					if file.UploadedBy == post.UserID &&
-						(file.Purpose == "input" || file.Purpose == "shared") &&
-						!seen[file.Name] {
-						names = append(names, file.Name)
-						seen[file.Name] = true
-					}
-				}
-
-				sort.Strings(names)
-			}
-
-			if len(payload.Inputs) != len(names) {
+			inputs, missing := workspaceInputs(post, files)
+			if len(missing) > 0 || !slices.Equal(payload.Inputs, inputs) {
 				return nil, &workspaceFailure{409, "task inputs changed; refresh before submitting"}
-			}
-
-			for i, name := range names {
-				latest := ""
-
-				for _, file := range files {
-					if file.UploadedBy == post.UserID && file.Name == name &&
-						(file.Purpose == "input" || file.Purpose == "shared") {
-						latest = file.ID.String()
-					}
-				}
-
-				if latest == "" || latest != payload.Inputs[i] {
-					return nil, &workspaceFailure{409, "task inputs changed; refresh before submitting"}
-				}
 			}
 		}
 
@@ -592,12 +592,21 @@ func (c *Controller) SubmitWorkspace(w http.ResponseWriter, r *http.Request) {
 			map[string]any{
 				"note":               payload.Note,
 				"submitted_at":       workspace.SubmittedAt,
+				"review_by":          workspace.ReviewBy,
 				"submission_version": workspace.SubmissionVersion,
 				"delivery_files":     workspace.DeliveryFiles,
+				"input_file_ids":     payload.Inputs,
+				"inputs_verified":    payload.Inputs != nil,
 			},
 		)
 
-		return map[string]any{"event_id": id}, err
+		return map[string]any{
+			"event_id":           id,
+			"post_id":            post.ID,
+			"submission_version": workspace.SubmissionVersion,
+			"review_state":       workspace.ReviewState,
+			"delivery_files":     workspace.DeliveryFiles,
+		}, err
 	})
 }
 
@@ -740,24 +749,32 @@ func saveWorkspaceFile(
 	id := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	hash := hex.EncodeToString(sum[:])
 
+	var agentID pgtype.UUID
+	if access := requestAgent(ctx); access != nil {
+		if err := agentID.Scan(access.ID); err != nil {
+			return empty, err
+		}
+	}
+
 	err = q.SaveWorkspaceFile(
 		ctx,
 		db.SaveWorkspaceFileParams{
-			ID:         id,
-			PostID:     post.ID,
-			UploadedBy: userID,
-			Name:       name,
-			Size:       int64(len(content)),
-			Sha256:     hash,
-			Content:    content,
-			Purpose:    purpose,
+			ID:           id,
+			PostID:       post.ID,
+			UploadedBy:   userID,
+			AgentGrantID: agentID,
+			Name:         name,
+			Size:         int64(len(content)),
+			Sha256:       hash,
+			Content:      content,
+			Purpose:      purpose,
 		},
 	)
 	if err != nil {
 		return empty, err
 	}
 
-	payload, err := json.Marshal(
+	payload, err := agentData(ctx,
 		map[string]any{"id": id, "name": name, "size": len(content), "sha256": hash, "purpose": purpose},
 	)
 	if err != nil {
@@ -775,14 +792,15 @@ func saveWorkspaceFile(
 	)
 
 	return db.WorkspaceFile{
-		ID:         id,
-		PostID:     post.ID,
-		UploadedBy: userID,
-		Name:       name,
-		Size:       int64(len(content)),
-		Sha256:     hash,
-		Purpose:    purpose,
-		CreatedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		ID:           id,
+		PostID:       post.ID,
+		UploadedBy:   userID,
+		AgentGrantID: agentID,
+		Name:         name,
+		Size:         int64(len(content)),
+		Sha256:       hash,
+		Purpose:      purpose,
+		CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}, err
 }
 

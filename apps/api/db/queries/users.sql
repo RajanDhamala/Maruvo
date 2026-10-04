@@ -27,8 +27,9 @@ RETURNING *;
 SELECT id, username, avatar, github_login FROM users WHERE id = ANY($1::bigint[]);
 
 -- name: CreatePost :one
-INSERT INTO posts (user_id,title,cost_lamports,end_time,status,level,description,acceptance_criteria,input_files,expected_outputs)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO posts (user_id,title,cost_lamports,end_time,status,level,description,acceptance_criteria,input_files,expected_outputs,
+    funding_window_seconds, deliver_by, review_window_seconds)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
 -- name: GetUrPosts :many

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/signal"
@@ -21,10 +23,19 @@ import (
 
 func main() {
 	explicitWallet := os.Getenv("MARUVO_WALLET")
+	agentMode := agentInvocation(os.Args[1:])
+	fail := func(err error) {
+		if agentMode {
+			_ = agent.WriteError(os.Stderr, err)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
+
+		os.Exit(1)
+	}
 
 	if err := walletconfig.LoadConfig(); err != nil {
-		fmt.Fprintln(os.Stderr, "load local Solana configuration:", err)
-		os.Exit(1)
+		fail(fmt.Errorf("load local Solana configuration: %w", err))
 	}
 
 	defaultURL := os.Getenv("API_URL")
@@ -32,16 +43,34 @@ func main() {
 		defaultURL = "http://127.0.0.1:3000"
 	}
 
-	apiURL := flag.String("api", defaultURL, "Go API base URL (or set API_URL)")
-	message := flag.String("message", "Hello from Bubble Tea", "demo message to send to Rust")
-	check := flag.Bool("check", false, "send once without a terminal UI; exit nonzero on failure")
-	demo := flag.Bool("demo", false, "show the existing Go/Rust connection demo")
-	profile := flag.String("profile", "default", "saved login profile (e.g. poster or worker)")
-	wallet := flag.String("wallet", "", "wallet keypair file (saved separately for each profile)")
+	flags := flag.NewFlagSet("maruvo", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
 
-	flag.Parse()
+	if agentMode {
+		flags.SetOutput(io.Discard)
+	}
 
-	args := flag.Args()
+	apiURL := flags.String("api", defaultURL, "Go API base URL (or set API_URL)")
+	message := flags.String("message", "Hello from Bubble Tea", "demo message to send to Rust")
+	check := flags.Bool("check", false, "send once without a terminal UI; exit nonzero on failure")
+	demo := flags.Bool("demo", false, "show the existing Go/Rust connection demo")
+	profile := flags.String("profile", "default", "saved login profile (e.g. poster or worker)")
+
+	wallet := flags.String("wallet", "", "wallet keypair file (saved separately for each profile)")
+	if err := flags.Parse(os.Args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			if agentMode {
+				flags.SetOutput(os.Stderr)
+				flags.PrintDefaults()
+			}
+
+			return
+		}
+
+		fail(agent.InvalidArgument(err.Error()))
+	}
+
+	args := flags.Args()
 	listTools := len(args) > 1 && args[0] == "agent" && args[1] == "tools"
 	*apiURL = strings.TrimRight(*apiURL, "/")
 
@@ -49,13 +78,11 @@ func main() {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
 		parsed.RawQuery != "" ||
 		parsed.Fragment != "" {
-		fmt.Fprintln(os.Stderr, "API URL must be an http(s) base URL without a query or fragment")
-		os.Exit(1)
+		fail(agent.InvalidArgument("API URL must be an http(s) base URL without a query or fragment"))
 	}
 
 	if err := auth.ValidateProfile(*profile); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fail(agent.InvalidArgument(err.Error()))
 	}
 
 	if !*check && !*demo && !listTools {
@@ -69,8 +96,7 @@ func main() {
 
 			chosen, err = auth.LoadWallet(*profile)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fail(err)
 			}
 		}
 
@@ -81,13 +107,11 @@ func main() {
 		if chosen != "" {
 			path, err := filepath.Abs(chosen)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fail(err)
 			}
 
 			if err = auth.SaveWallet(*profile, path); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				fail(err)
 			}
 
 			os.Setenv("MARUVO_WALLET", path)
@@ -111,9 +135,28 @@ func main() {
 	}
 
 	if runErr != nil {
-		fmt.Fprintln(os.Stderr, runErr)
-		os.Exit(1)
+		fail(runErr)
 	}
+}
+
+func agentInvocation(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return i+1 < len(args) && args[i+1] == "agent"
+		}
+
+		if !strings.HasPrefix(arg, "-") {
+			return arg == "agent"
+		}
+
+		name, _, assigned := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if !assigned && (name == "api" || name == "profile" || name == "wallet" || name == "message") {
+			i++
+		}
+	}
+
+	return false
 }
 
 func run(apiURL, message string, check, demo bool, profile string) error {

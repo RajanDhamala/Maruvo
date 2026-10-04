@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/rajandhamala/Maruvo/cli/internal/api"
 )
 
 func TestDeclaredOutputCannotEscapeRunDirectory(t *testing.T) {
@@ -58,5 +61,26 @@ func TestDeclaredOutputCannotEscapeRunDirectory(t *testing.T) {
 
 	if _, err := readOutput(root, "secret"); err == nil {
 		t.Fatal("an output directory symlink escaped the run directory")
+	}
+}
+
+func TestSharedInputsWithoutCreationDeclarations(t *testing.T) {
+	now := time.Now()
+	workspace := api.Workspace{Post: api.Post{UserID: 1}, Files: []api.WorkspaceFile{
+		{ID: "old", Name: "source.txt", UploadedBy: 1, Purpose: "shared", CreatedAt: now},
+		{ID: "worker", Name: "worker.txt", UploadedBy: 2, Purpose: "shared", CreatedAt: now},
+		{ID: "latest", Name: "source.txt", UploadedBy: 1, Purpose: "input", CreatedAt: now.Add(time.Second)},
+		{ID: "poster-output", Name: "output.txt", UploadedBy: 1, Purpose: "output", CreatedAt: now},
+		{ID: "brief", Name: "brief.md", UploadedBy: 1, Purpose: "shared", CreatedAt: now},
+	}}
+
+	inputs, ready := taskInputs(workspace)
+	if !ready || len(inputs) != 2 || inputs[0].ID != "brief" || inputs[1].ID != "latest" {
+		t.Fatal("use the latest requester inputs, ordered by filename, and exclude worker/output files")
+	}
+
+	workspace.Post.InputFiles = []string{"missing.txt"}
+	if _, ready = taskInputs(workspace); ready {
+		t.Fatal("legacy declared inputs must still gate the runner")
 	}
 }

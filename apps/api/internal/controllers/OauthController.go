@@ -76,6 +76,28 @@ func (ctrl *Controller) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasPrefix(token, agentTokenPrefix) {
+		grant, err := ctrl.resolveAgent(r.Context(), token)
+		if err != nil {
+			workspaceError(w, err)
+			return
+		}
+
+		profile, err := ctrl.queries.GetUser(r.Context(), grant.OwnerID)
+		if err != nil {
+			postJSON(w, 503, map[string]string{"error": "agent profile unavailable"})
+			return
+		}
+
+		w.Header().Set("Cache-Control", "no-store")
+		postJSON(w, 200, map[string]any{
+			"id": strconv.FormatInt(grant.OwnerID, 10), "username": profile.Username,
+			"agent_access": grantView(grant).AgentAccess,
+		})
+
+		return
+	}
+
 	user, err := utils.VerifyUserToken(token)
 	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)

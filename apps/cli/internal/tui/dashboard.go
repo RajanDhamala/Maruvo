@@ -164,11 +164,11 @@ func (m model) dashboardLayout() postLayout {
 		l.hit(0, g.promptY, g.mainWidth, homePromptHeight, "dashboard-prompt", 0)
 	}
 
-	help := "↑↓ browse · Enter open · / search · f filter · Tab prompt"
+	help := "↑↓ browse · Enter open · / commands · Ctrl+f search · Tab prompt"
 	controls := "n new · 1/2 view · r refresh · Ctrl+b sidebar · Ctrl+t prompt"
 
 	if g.mainWidth < 76 {
-		help = "↑↓ · Enter · / search · f filter · Tab input"
+		help = "↑↓ · Enter · / commands · Ctrl+f search"
 		controls = "1/2 view · Ctrl+b panel · Ctrl+t input"
 	}
 
@@ -189,7 +189,7 @@ func (m model) dashboardLayout() postLayout {
 	} else if m.dashboard.filterOpen {
 		help = "↑↓ choose · Enter apply · Esc close"
 	} else if m.dashboard.focus == dashboardTasks && len(m.listIndices()) == 0 && !m.loading {
-		help = "Enter · / search · f filter · Tab prompt"
+		help = "Enter · / commands · Ctrl+f search · Tab prompt"
 	}
 
 	l.rows[height-3] = muted(ansi.Truncate(help, g.mainWidth, "…"))
@@ -277,6 +277,14 @@ func (m model) dashboardList(l *postLayout, width, height int) {
 				date = "Accept by " + post.EndTime.Local().Format("02 Jan")
 			}
 
+			if post.DeliverBy != nil {
+				date = "Deliver by " + post.DeliverBy.Local().Format("02 Jan")
+			}
+
+			if post.Deadline.DueAt != nil && !time.Now().Before(*post.Deadline.DueAt) {
+				date = deadlineLabel(post.Deadline)
+			}
+
 			l.rows[y+1] = "  " + align(muted(meta), muted(date), width-2)
 		}
 
@@ -347,6 +355,11 @@ func (m model) dashboardSidebar(l *postLayout, x, width, height int) {
 
 	put(height-2, muted(plain(path)))
 
+	hide := "\x1b[38;5;239m[Hide sidebar]\x1b[0m"
+	cells := ansi.StringWidth(hide)
+	put(height-1, strings.Repeat(" ", width-4-cells)+hide)
+	l.hit(x+width-2-cells, height-1, cells, 1, "dashboard-sidebar", 0)
+
 	if y+3 >= height-4 {
 		return
 	}
@@ -390,6 +403,11 @@ func activeTask(post api.Post) bool {
 }
 
 func taskStatus(post api.Post) string {
+	if post.Deadline.DueAt != nil && !time.Now().Before(*post.Deadline.DueAt) &&
+		(post.Status == "open" || activeTask(post)) {
+		return deadlineLabel(post.Deadline)
+	}
+
 	if post.Status == "negotiating" {
 		return "Awaiting funding"
 	}

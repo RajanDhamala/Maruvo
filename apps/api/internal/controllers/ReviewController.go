@@ -295,7 +295,12 @@ func (c *Controller) RequestPostChanges(w http.ResponseWriter, r *http.Request) 
 			map[string]any{"note": payload.Note, "submission_version": payload.SubmissionVersion},
 		)
 
-		return map[string]any{"event_id": id}, err
+		return map[string]any{
+			"event_id":           id,
+			"post_id":            post.ID,
+			"submission_version": payload.SubmissionVersion,
+			"review_state":       "changes_requested",
+		}, err
 	})
 }
 

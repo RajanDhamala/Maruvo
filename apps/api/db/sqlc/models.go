@@ -100,24 +100,41 @@ func (ns NullPostStatus) Value() (driver.Value, error) {
 	return string(ns.PostStatus), nil
 }
 
+type AgentGrant struct {
+	ID          pgtype.UUID        `json:"id"`
+	OwnerID     int64              `json:"owner_id"`
+	PostID      int64              `json:"post_id"`
+	Name        string             `json:"name"`
+	TokenHash   string             `json:"token_hash"`
+	Permissions []string           `json:"permissions"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Post struct {
-	ID                 int64              `json:"id"`
-	UserID             int64              `json:"user_id"`
-	Title              string             `json:"title"`
-	CostLamports       int64              `json:"cost_lamports"`
-	EndTime            pgtype.Timestamptz `json:"end_time"`
-	Status             PostStatus         `json:"status"`
-	Level              PostLevel          `json:"level"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	AcceptedBy         pgtype.Int8        `json:"accepted_by"`
-	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
-	PosterWallet       string             `json:"poster_wallet"`
-	WorkerWallet       string             `json:"worker_wallet"`
-	Description        string             `json:"description"`
-	AcceptanceCriteria string             `json:"acceptance_criteria"`
-	InputFiles         []string           `json:"input_files"`
-	ExpectedOutputs    []string           `json:"expected_outputs"`
+	ID                   int64              `json:"id"`
+	UserID               int64              `json:"user_id"`
+	Title                string             `json:"title"`
+	CostLamports         int64              `json:"cost_lamports"`
+	EndTime              pgtype.Timestamptz `json:"end_time"`
+	Status               PostStatus         `json:"status"`
+	Level                PostLevel          `json:"level"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	AcceptedBy           pgtype.Int8        `json:"accepted_by"`
+	AcceptedAt           pgtype.Timestamptz `json:"accepted_at"`
+	PosterWallet         string             `json:"poster_wallet"`
+	WorkerWallet         string             `json:"worker_wallet"`
+	Description          string             `json:"description"`
+	AcceptanceCriteria   string             `json:"acceptance_criteria"`
+	InputFiles           []string           `json:"input_files"`
+	ExpectedOutputs      []string           `json:"expected_outputs"`
+	ReopenedAs           pgtype.Int8        `json:"reopened_as"`
+	FundingWindowSeconds int64              `json:"funding_window_seconds"`
+	FundBy               pgtype.Timestamptz `json:"fund_by"`
+	DeliverBy            pgtype.Timestamptz `json:"deliver_by"`
+	ReviewWindowSeconds  int64              `json:"review_window_seconds"`
 }
 
 type PostEscrow struct {
@@ -161,6 +178,14 @@ type PostWorkspace struct {
 	SubmissionVersion int64              `json:"submission_version"`
 	ReviewNote        string             `json:"review_note"`
 	DeliveryFiles     []pgtype.UUID      `json:"delivery_files"`
+	ReviewBy          pgtype.Timestamptz `json:"review_by"`
+}
+
+type TaskDeadlineNotice struct {
+	PostID            int64              `json:"post_id"`
+	Stage             string             `json:"stage"`
+	SubmissionVersion int64              `json:"submission_version"`
+	DueAt             pgtype.Timestamptz `json:"due_at"`
 }
 
 type User struct {
@@ -198,13 +223,14 @@ type WorkspaceEvent struct {
 }
 
 type WorkspaceFile struct {
-	ID         pgtype.UUID        `json:"id"`
-	PostID     int64              `json:"post_id"`
-	UploadedBy int64              `json:"uploaded_by"`
-	Name       string             `json:"name"`
-	Size       int64              `json:"size"`
-	Sha256     string             `json:"sha256"`
-	Content    []byte             `json:"content"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	Purpose    string             `json:"purpose"`
+	ID           pgtype.UUID        `json:"id"`
+	PostID       int64              `json:"post_id"`
+	UploadedBy   int64              `json:"uploaded_by"`
+	Name         string             `json:"name"`
+	Size         int64              `json:"size"`
+	Sha256       string             `json:"sha256"`
+	Content      []byte             `json:"content"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Purpose      string             `json:"purpose"`
+	AgentGrantID pgtype.UUID        `json:"agent_grant_id"`
 }

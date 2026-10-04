@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/rajandhamala/Maruvo/db/sqlc"
-	"github.com/rajandhamala/Maruvo/internal/utils"
 )
 
 const fileChunkSize = 64 << 10
@@ -30,14 +30,15 @@ type fileRequest struct {
 
 func fileView(file db.WorkspaceFile) db.ListWorkspaceFilesRow {
 	return db.ListWorkspaceFilesRow{
-		ID:         file.ID,
-		PostID:     file.PostID,
-		UploadedBy: file.UploadedBy,
-		Name:       file.Name,
-		Size:       file.Size,
-		Sha256:     file.Sha256,
-		CreatedAt:  file.CreatedAt,
-		Purpose:    file.Purpose,
+		ID:           file.ID,
+		PostID:       file.PostID,
+		UploadedBy:   file.UploadedBy,
+		AgentGrantID: file.AgentGrantID,
+		Name:         file.Name,
+		Size:         file.Size,
+		Sha256:       file.Sha256,
+		CreatedAt:    file.CreatedAt,
+		Purpose:      file.Purpose,
 	}
 }
 
@@ -70,6 +71,10 @@ func (c *Controller) WorkspaceFileSocket(w http.ResponseWriter, r *http.Request)
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 
+	if requestAgent(r.Context()) != nil {
+		go c.watchAgentSession(ctx, cancel, r)
+	}
+
 	conn.SetReadLimit(fileChunkSize)
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 
@@ -87,6 +92,14 @@ func (c *Controller) WorkspaceFileSocket(w http.ResponseWriter, r *http.Request)
 
 	switch request.Action {
 	case "upload":
+		if access := requestAgent(
+			r.Context(),
+		); access != nil &&
+			!slices.Contains(access.Permissions, "upload") {
+			err = &workspaceFailure{403, "agent credential does not allow uploads"}
+			break
+		}
+
 		file, err = c.receiveWorkspaceFile(ctx, r, conn, postID, userID, request)
 	case "download":
 		var id pgtype.UUID
@@ -175,10 +188,8 @@ func (c *Controller) receiveWorkspaceFile(
 		return empty, &workspaceFailure{400, "file integrity check failed"}
 	}
 
-	if _, err = utils.VerifyUserToken(
-		strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
-	); err != nil {
-		return empty, &workspaceFailure{401, "session expired"}
+	if err := c.checkSession(ctx, r); err != nil {
+		return empty, err
 	}
 
 	tx, err := c.pool.Begin(ctx)
@@ -188,6 +199,9 @@ func (c *Controller) receiveWorkspaceFile(
 	defer tx.Rollback(ctx)
 
 	q := db.New(tx)
+	if err := lockAgent(ctx, q); err != nil {
+		return empty, err
+	}
 
 	post, err := q.LockPost(ctx, postID)
 	if err != nil {

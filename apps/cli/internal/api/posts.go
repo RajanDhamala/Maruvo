@@ -20,36 +20,53 @@ type PublicUser struct {
 }
 
 type Post struct {
-	Poster             *PublicUser `json:"poster"`
-	Worker             *PublicUser `json:"worker"`
-	Description        string      `json:"description"`
-	AcceptanceCriteria string      `json:"acceptance_criteria"`
-	InputFiles         []string    `json:"input_files"`
-	ExpectedOutputs    []string    `json:"expected_outputs"`
-	ID                 int64       `json:"id"`
-	UserID             int64       `json:"user_id"`
-	Title              string      `json:"title"`
-	CostLamports       int64       `json:"cost_lamports"`
-	EndTime            time.Time   `json:"end_time"`
-	Status             string      `json:"status"`
-	Level              string      `json:"level"`
-	CreatedAt          time.Time   `json:"created_at"`
-	UpdatedAt          time.Time   `json:"updated_at"`
-	AcceptedBy         *int64      `json:"accepted_by"`
-	AcceptedAt         *time.Time  `json:"accepted_at"`
-	PosterWallet       string      `json:"poster_wallet"`
-	WorkerWallet       string      `json:"worker_wallet"`
+	Poster               *PublicUser  `json:"poster"`
+	Worker               *PublicUser  `json:"worker"`
+	Description          string       `json:"description"`
+	AcceptanceCriteria   string       `json:"acceptance_criteria"`
+	InputFiles           []string     `json:"input_files"`
+	ExpectedOutputs      []string     `json:"expected_outputs"`
+	ID                   int64        `json:"id"`
+	UserID               int64        `json:"user_id"`
+	Title                string       `json:"title"`
+	CostLamports         int64        `json:"cost_lamports"`
+	EndTime              time.Time    `json:"end_time"`
+	Status               string       `json:"status"`
+	Level                string       `json:"level"`
+	CreatedAt            time.Time    `json:"created_at"`
+	UpdatedAt            time.Time    `json:"updated_at"`
+	AcceptedBy           *int64       `json:"accepted_by"`
+	AcceptedAt           *time.Time   `json:"accepted_at"`
+	ReopenedAs           *int64       `json:"reopened_as"`
+	PosterWallet         string       `json:"poster_wallet"`
+	WorkerWallet         string       `json:"worker_wallet"`
+	FundingWindowSeconds int64        `json:"funding_window_seconds"`
+	FundBy               *time.Time   `json:"fund_by"`
+	DeliverBy            *time.Time   `json:"deliver_by"`
+	ReviewWindowSeconds  int64        `json:"review_window_seconds"`
+	Deadline             TaskDeadline `json:"deadline"`
+}
+
+type TaskDeadline struct {
+	Stage          string     `json:"stage"`
+	DueAt          *time.Time `json:"due_at"`
+	Overdue        bool       `json:"overdue"`
+	RecoveryAction string     `json:"recovery_action"`
+	DeliveryLate   bool       `json:"delivery_late"`
 }
 
 type CreatePostPayload struct {
-	Description        string    `json:"description"`
-	AcceptanceCriteria string    `json:"acceptance_criteria"`
-	InputFiles         []string  `json:"input_files"`
-	ExpectedOutputs    []string  `json:"expected_outputs"`
-	Title              string    `json:"title"`
-	CostLamports       int64     `json:"cost_lamports"`
-	EndTime            time.Time `json:"end_time"`
-	Level              string    `json:"level"`
+	Description          string    `json:"description"`
+	AcceptanceCriteria   string    `json:"acceptance_criteria"`
+	InputFiles           []string  `json:"input_files"`
+	ExpectedOutputs      []string  `json:"expected_outputs"`
+	Title                string    `json:"title"`
+	CostLamports         int64     `json:"cost_lamports"`
+	EndTime              time.Time `json:"end_time"`
+	Level                string    `json:"level"`
+	FundingWindowSeconds int64     `json:"funding_window_seconds"`
+	DeliverBy            time.Time `json:"deliver_by"`
+	ReviewWindowSeconds  int64     `json:"review_window_seconds"`
 }
 
 func (c *Client) CreatePost(ctx context.Context, token string, payload CreatePostPayload) (Post, error) {
@@ -98,6 +115,33 @@ func (c *Client) UpdateStatus(ctx context.Context, token string, id int64, statu
 		ID     int64  `json:"id"`
 		Status string `json:"status"`
 	}{ID: id, Status: status}, &result)
+
+	return result.Post, err
+}
+
+func (c *Client) RecoverPost(
+	ctx context.Context,
+	token string,
+	id int64,
+	action string,
+	deadline time.Time,
+	delivery ...time.Time,
+) (Post, error) {
+	var result struct {
+		Post Post `json:"post"`
+	}
+
+	deliverBy := time.Time{}
+	if len(delivery) > 0 {
+		deliverBy = delivery[0]
+	}
+
+	err := c.requestJSON(ctx, http.MethodPost, "/posts/recover", token, struct {
+		ID        int64     `json:"id"`
+		Action    string    `json:"action"`
+		EndTime   time.Time `json:"end_time"`
+		DeliverBy time.Time `json:"deliver_by"`
+	}{ID: id, Action: action, EndTime: deadline, DeliverBy: deliverBy}, &result)
 
 	return result.Post, err
 }

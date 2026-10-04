@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -24,6 +28,86 @@ func chatModel() model {
 			Post:  api.Post{ID: 1, Status: "in_progress"},
 			State: api.WorkspaceState{ReviewState: "working"},
 		},
+	}
+}
+
+func TestChatRetryKeepsMessageID(t *testing.T) {
+	var (
+		ids []string
+		mu  sync.Mutex
+	)
+
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return append([]string(nil), ids...)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+
+		mu.Lock()
+
+		ids = append(ids, payload["message_id"])
+		fail := len(ids) <= 2
+		mu.Unlock()
+
+		if fail {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	m := chatModel()
+	m.client, m.workspaceCtx = api.NewClient(server.URL), context.Background()
+	m.composer.draft.value = "hello"
+	next, command := m.sendChat()
+	m = next.(model)
+
+	result := command().(chatSent)
+	if result.err == nil {
+		t.Fatal("expected the first send to fail")
+	}
+
+	next, _ = m.chatSent(result)
+	m = next.(model)
+	next, command = m.sendChat()
+	m = next.(model)
+	result = command().(chatSent)
+
+	got := snapshot()
+	if result.err != nil || len(got) != 3 || got[0] == "" || got[0] != got[1] || got[0] != got[2] {
+		t.Fatalf("manual retry changed message ID: ids=%v, err=%v", got, result.err)
+	}
+
+	next, _ = m.chatSent(result)
+	m = next.(model)
+	m.composer.draft.value = "hello"
+	next, command = m.sendChat()
+	m = next.(model)
+	result = command().(chatSent)
+
+	got = snapshot()
+	if result.err != nil || len(got) != 4 || got[3] == got[0] {
+		t.Fatal("a new draft reused the successfully sent message ID")
+	}
+
+	next, _ = m.chatSent(chatSent{generation: m.workspaceGen, err: errors.New("lost response")})
+	m = next.(model)
+	m.composer.draft.value = "edited"
+	_, command = m.sendChat()
+	result = command().(chatSent)
+
+	got = snapshot()
+	if result.err != nil || len(got) != 5 || got[4] == got[3] {
+		t.Fatal("editing a failed draft did not create a new message ID")
 	}
 }
 

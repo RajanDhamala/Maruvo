@@ -7,6 +7,8 @@ import (
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case deadlineClock:
+		return m, deadlineTick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.MouseClickMsg:
@@ -14,6 +16,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		return m.updateWheel(msg)
 	case tea.PasteMsg:
+		if m.commands.open {
+			m.commands.query.insert(msg.Content)
+			return m.updateCommandQuery()
+		}
+
 		if m.token == "" && !m.demo && !m.loading {
 			m.homeFocus, m.homeInput.limit = homePrompt, 2000
 			m.homeInput.insert(msg.Content)
@@ -41,6 +48,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.token != "" && m.screen == newPostScreen && m.form.importing && !m.loading && !m.profileOpen {
 			m.form.path.insert(msg.Content)
 			return m, m.searchDescriptionFiles()
+		} else if m.token != "" && m.screen == newPostScreen && m.form.timingOpen && !m.loading && !m.profileOpen {
+			if m.form.timingFocus == 0 || m.form.timingFocus == 2 {
+				m.form.timings[m.form.timingFocus].insert(msg.Content)
+			}
 		} else if m.token != "" && m.screen == newPostScreen && !m.loading && !m.profileOpen && m.form.focus < len(m.form.fields) &&
 			m.form.focus != 2 {
 			if m.form.focus == 3 && m.form.descriptionSource == descriptionFromFile {
@@ -53,6 +64,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			m.stopWorkspace()
 			return m, tea.Quit
+		}
+
+		if m.commands.open {
+			return m.updateCommands(msg)
+		}
+
+		if msg.String() == "/" && m.canOpenCommands() {
+			return m.openCommands(), nil
 		}
 
 		if m.token != "" && !m.demo {
@@ -90,6 +109,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading, m.err = true, nil
 				return m, m.sendDemo()
 			}
+		}
+	case directoriesFound:
+		if m.commands.open && m.commands.directory && msg.sequence == m.commands.sequence {
+			m.commands.folders, m.commands.err, m.commands.searching = msg.folders, msg.err, false
+		}
+	case directoryOpened:
+		if !m.commands.open || !m.commands.directory || msg.sequence != m.commands.sequence {
+			return m, nil
+		}
+
+		m.commands.err, m.commands.searching = msg.err, false
+		if msg.err == nil {
+			m.directory, m.homePath = msg.path, displayHomePath(msg.path)
+			m.commands.open = false
+			m.composer.root = msg.path
+			m.composer.sequence++
+			m.composer.suggestions, m.composer.completing = nil, false
+			m.err, m.notice = nil, "Directory opened."
 		}
 	case demoResult:
 		m.loading = false
@@ -230,6 +267,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deleting, m.editingStatus = false, false
 
 		switch {
+		case msg.recovered != "":
+			m.recovering = ""
+			m.dashboard.ready = false
+			m.dashboard.generation++
+			m.posts[m.selected] = msg.post
+
+			m.notice = "Task canceled before funding. Its private history is retained."
+			if m.escrow.Address != "" {
+				m.escrow.State = "expired"
+			}
+
+			if msg.recovered == "reopen" {
+				m.escrow = api.Escrow{State: "unfunded"}
+				m.notice = "Task reopened under a new ID. Share supporting files with the new worker."
+				m.loading = true
+
+				return m, m.postInfo()
+			}
 		case msg.accepted:
 			m.dashboard.ready = false
 			m.walletAddress = msg.post.WorkerWallet

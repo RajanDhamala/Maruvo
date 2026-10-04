@@ -19,13 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SolanaService_Health_FullMethodName            = "/maruvo.SolanaService/Health"
-	SolanaService_Demo_FullMethodName              = "/maruvo.SolanaService/Demo"
-	SolanaService_PrepareEscrow_FullMethodName     = "/maruvo.SolanaService/PrepareEscrow"
-	SolanaService_SubmitEscrow_FullMethodName      = "/maruvo.SolanaService/SubmitEscrow"
-	SolanaService_CheckEscrow_FullMethodName       = "/maruvo.SolanaService/CheckEscrow"
-	SolanaService_PrepareSettlement_FullMethodName = "/maruvo.SolanaService/PrepareSettlement"
-	SolanaService_CheckSettlement_FullMethodName   = "/maruvo.SolanaService/CheckSettlement"
+	SolanaService_Health_FullMethodName              = "/maruvo.SolanaService/Health"
+	SolanaService_Demo_FullMethodName                = "/maruvo.SolanaService/Demo"
+	SolanaService_PrepareEscrow_FullMethodName       = "/maruvo.SolanaService/PrepareEscrow"
+	SolanaService_SubmitEscrow_FullMethodName        = "/maruvo.SolanaService/SubmitEscrow"
+	SolanaService_CheckEscrow_FullMethodName         = "/maruvo.SolanaService/CheckEscrow"
+	SolanaService_CheckEscrowRecovery_FullMethodName = "/maruvo.SolanaService/CheckEscrowRecovery"
+	SolanaService_PrepareSettlement_FullMethodName   = "/maruvo.SolanaService/PrepareSettlement"
+	SolanaService_CheckSettlement_FullMethodName     = "/maruvo.SolanaService/CheckSettlement"
 )
 
 // SolanaServiceClient is the client API for SolanaService service.
@@ -37,6 +38,7 @@ type SolanaServiceClient interface {
 	PrepareEscrow(ctx context.Context, in *PrepareEscrowRequest, opts ...grpc.CallOption) (*PreparedEscrow, error)
 	SubmitEscrow(ctx context.Context, in *SubmitEscrowRequest, opts ...grpc.CallOption) (*SubmittedEscrow, error)
 	CheckEscrow(ctx context.Context, in *CheckEscrowRequest, opts ...grpc.CallOption) (*EscrowState, error)
+	CheckEscrowRecovery(ctx context.Context, in *CheckEscrowRequest, opts ...grpc.CallOption) (*EscrowState, error)
 	PrepareSettlement(ctx context.Context, in *PrepareSettlementRequest, opts ...grpc.CallOption) (*PreparedSettlement, error)
 	CheckSettlement(ctx context.Context, in *CheckSettlementRequest, opts ...grpc.CallOption) (*SettlementState, error)
 }
@@ -99,6 +101,16 @@ func (c *solanaServiceClient) CheckEscrow(ctx context.Context, in *CheckEscrowRe
 	return out, nil
 }
 
+func (c *solanaServiceClient) CheckEscrowRecovery(ctx context.Context, in *CheckEscrowRequest, opts ...grpc.CallOption) (*EscrowState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EscrowState)
+	err := c.cc.Invoke(ctx, SolanaService_CheckEscrowRecovery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *solanaServiceClient) PrepareSettlement(ctx context.Context, in *PrepareSettlementRequest, opts ...grpc.CallOption) (*PreparedSettlement, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PreparedSettlement)
@@ -128,6 +140,7 @@ type SolanaServiceServer interface {
 	PrepareEscrow(context.Context, *PrepareEscrowRequest) (*PreparedEscrow, error)
 	SubmitEscrow(context.Context, *SubmitEscrowRequest) (*SubmittedEscrow, error)
 	CheckEscrow(context.Context, *CheckEscrowRequest) (*EscrowState, error)
+	CheckEscrowRecovery(context.Context, *CheckEscrowRequest) (*EscrowState, error)
 	PrepareSettlement(context.Context, *PrepareSettlementRequest) (*PreparedSettlement, error)
 	CheckSettlement(context.Context, *CheckSettlementRequest) (*SettlementState, error)
 	mustEmbedUnimplementedSolanaServiceServer()
@@ -154,6 +167,9 @@ func (UnimplementedSolanaServiceServer) SubmitEscrow(context.Context, *SubmitEsc
 }
 func (UnimplementedSolanaServiceServer) CheckEscrow(context.Context, *CheckEscrowRequest) (*EscrowState, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckEscrow not implemented")
+}
+func (UnimplementedSolanaServiceServer) CheckEscrowRecovery(context.Context, *CheckEscrowRequest) (*EscrowState, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckEscrowRecovery not implemented")
 }
 func (UnimplementedSolanaServiceServer) PrepareSettlement(context.Context, *PrepareSettlementRequest) (*PreparedSettlement, error) {
 	return nil, status.Error(codes.Unimplemented, "method PrepareSettlement not implemented")
@@ -272,6 +288,24 @@ func _SolanaService_CheckEscrow_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SolanaService_CheckEscrowRecovery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckEscrowRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SolanaServiceServer).CheckEscrowRecovery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SolanaService_CheckEscrowRecovery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SolanaServiceServer).CheckEscrowRecovery(ctx, req.(*CheckEscrowRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SolanaService_PrepareSettlement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PrepareSettlementRequest)
 	if err := dec(in); err != nil {
@@ -334,6 +368,10 @@ var SolanaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckEscrow",
 			Handler:    _SolanaService_CheckEscrow_Handler,
+		},
+		{
+			MethodName: "CheckEscrowRecovery",
+			Handler:    _SolanaService_CheckEscrowRecovery_Handler,
 		},
 		{
 			MethodName: "PrepareSettlement",

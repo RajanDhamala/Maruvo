@@ -11,6 +11,10 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.commands.open {
+		return m.updateCommandMouse(msg)
+	}
+
 	if m.token == "" {
 		return m.updateAuthMouse(msg)
 	}
@@ -95,8 +99,22 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 
 		switch hit.action {
+		case "timings":
+			m.form.timingOpen = true
+			return m, nil
+		case "timing-field":
+			m.form.timingFocus = hit.index
+			if hit.index == 1 {
+				return m.openDeliveryDeadline(), nil
+			}
+
+			return m, nil
+		case "timing-done":
+			m.form.timingOpen = false
+			return m, nil
 		case "dashboard-scope", "dashboard-level", "dashboard-wallet", "dashboard-task",
-			"dashboard-submit", "dashboard-search", "dashboard-prompt", "dashboard-filter", "dashboard-empty":
+			"dashboard-submit", "dashboard-search", "dashboard-prompt", "dashboard-filter", "dashboard-empty",
+			"dashboard-sidebar":
 			return m.updateDashboardMouse(hit, x, y)
 		case "refresh":
 			return m.updatePosts(tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -204,7 +222,7 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			}
 
 			return m.updatePosts(tea.KeyPressMsg{Code: tea.KeyEsc})
-		case "s", "d", "a", "f", "c", "m", "u", "b", "v", "x", "e":
+		case "s", "d", "a", "f", "c", "m", "u", "b", "v", "x", "e", "o":
 			if m.screen == workspaceScreen && m.workspaceAction == "" && !m.reviewConfirm {
 				return m.workspaceCommand(hit.action)
 			}
@@ -231,6 +249,12 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m.updatePosts(tea.KeyPressMsg{Code: tea.KeyEnter})
 		case "fund-confirm":
 			return m.updatePosts(tea.KeyPressMsg{Code: tea.KeyEnter})
+		case "recovery-confirm":
+			return m.updatePosts(tea.KeyPressMsg{Code: tea.KeyEnter})
+		case "recovery-deadline":
+			return m.openDeadline(), nil
+		case "recovery-delivery":
+			return m.openDeliveryDeadline(), nil
 		case "delete":
 			return m.updatePosts(tea.KeyPressMsg{Code: 'y', Text: "y"})
 		case "cancel":
@@ -245,6 +269,18 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 func (m model) updateWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	width, height := m.dimensions()
+	if m.commands.open {
+		if msg.Button == tea.MouseWheelUp {
+			return m.updateCommands(tea.KeyPressMsg{Code: tea.KeyUp})
+		}
+
+		if msg.Button == tea.MouseWheelDown {
+			return m.updateCommands(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+
+		return m, nil
+	}
+
 	if m.demo || m.token == "" || m.loading || m.profileOpen || width < 48 || height < 16 {
 		return m, nil
 	}

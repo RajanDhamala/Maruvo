@@ -63,14 +63,22 @@ func agreement(post db.Post, version int32) *pb.PrepareEscrowRequest {
 		post.Level,
 		post.Title,
 	)
-	if version == 2 {
-		data, _ := json.Marshal([]any{
+	if version == 2 || version == 3 {
+		values := []any{
 			"maruvo-escrow-v2", post.ID, post.UserID, post.AcceptedBy.Int64,
 			post.PosterWallet, post.WorkerWallet, post.CostLamports,
 			post.EndTime.Time.UTC().Format(time.RFC3339Nano), string(post.Level), post.Title,
 			post.Description, post.AcceptanceCriteria,
 			append([]string{}, post.InputFiles...), append([]string{}, post.ExpectedOutputs...),
-		})
+		}
+		if version == 3 {
+			values[0] = "maruvo-escrow-v3"
+			values = append(values, post.FundingWindowSeconds,
+				post.FundBy.Time.UTC().Format(time.RFC3339Nano),
+				post.DeliverBy.Time.UTC().Format(time.RFC3339Nano), post.ReviewWindowSeconds)
+		}
+
+		data, _ := json.Marshal(values)
 		terms = string(data)
 	}
 
@@ -89,6 +97,11 @@ func postIDPayload(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	var payload DeletePostPayload
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&payload) != nil || payload.ID <= 0 {
 		postJSON(w, 400, map[string]string{"error": "invalid post ID"})
+		return 0, false
+	}
+
+	if access := requestAgent(r.Context()); access != nil && payload.ID != access.PostID {
+		postJSON(w, 403, map[string]string{"error": "agent credential does not allow this task"})
 		return 0, false
 	}
 
@@ -330,7 +343,12 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	plan, err := pb.NewSolanaServiceClient(c.rpc).PrepareEscrow(ctx, agreement(post, 2))
+	version := int32(2)
+	if post.DeliverBy.Valid {
+		version = 3
+	}
+
+	plan, err := pb.NewSolanaServiceClient(c.rpc).PrepareEscrow(ctx, agreement(post, version))
 	if err != nil {
 		escrowError(w, err)
 		return
@@ -339,7 +357,7 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 	escrow, err = q.SavePostEscrow(
 		ctx,
 		db.SavePostEscrowParams{
-			AgreementVersion:     2,
+			AgreementVersion:     version,
 			PostID:               id,
 			Address:              plan.Address,
 			ProgramID:            plan.ProgramId,
@@ -421,6 +439,11 @@ func (c *Controller) SubmitPostFunding(w http.ResponseWriter, r *http.Request) {
 
 	if escrow.State == "confirmed" && escrow.Signature == signature {
 		c.writePost(w, r, 200, post, map[string]any{"escrow": escrowView(escrow, false)})
+		return
+	}
+
+	if post.Status != db.PostStatusNegotiating {
+		postJSON(w, 409, map[string]string{"error": "this task no longer accepts funding"})
 		return
 	}
 

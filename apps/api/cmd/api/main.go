@@ -61,6 +61,7 @@ func main() {
 	var workers sync.WaitGroup
 	workers.Go(func() { ctrl.RunEscrowMonitor(ctx) })
 	workers.Go(func() { ctrl.RunWorkspaceWorkers(ctx) })
+	workers.Go(func() { ctrl.RunDeadlineMonitor(ctx) })
 
 	defer func() {
 		stop()

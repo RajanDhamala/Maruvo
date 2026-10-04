@@ -10,7 +10,7 @@ import (
 )
 
 const closeWorkspaceReview = `-- name: CloseWorkspaceReview :exec
-UPDATE post_workspaces SET review_state = $2
+UPDATE post_workspaces SET review_state = $2, review_by = NULL
 WHERE post_id = $1 AND review_state <> $2
 `
 
@@ -97,8 +97,8 @@ func (q *Queries) MarkSettlementSubmitted(ctx context.Context, arg MarkSettlemen
 }
 
 const requestWorkspaceChanges = `-- name: RequestWorkspaceChanges :one
-UPDATE post_workspaces SET review_state = 'changes_requested', review_note = $2
-WHERE post_id = $1 AND review_state = 'submitted' RETURNING post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files
+UPDATE post_workspaces SET review_state = 'changes_requested', review_note = $2, review_by = NULL
+WHERE post_id = $1 AND review_state = 'submitted' RETURNING post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files, review_by
 `
 
 type RequestWorkspaceChangesParams struct {
@@ -118,6 +118,7 @@ func (q *Queries) RequestWorkspaceChanges(ctx context.Context, arg RequestWorksp
 		&i.SubmissionVersion,
 		&i.ReviewNote,
 		&i.DeliveryFiles,
+		&i.ReviewBy,
 	)
 	return i, err
 }

@@ -16,6 +16,11 @@ func (m model) updateDashboard(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.dashboard.sidebarHidden = !m.dashboard.sidebarHidden
 
 		return m, nil
+	case "ctrl+f":
+		m.dashboard.filterOpen = false
+		m.dashboard.focus = dashboardSearch
+
+		return m, nil
 	case "ctrl+t":
 		m.dashboard.filterOpen = false
 		m.dashboard.promptHidden = !m.dashboard.promptHidden
@@ -89,7 +94,7 @@ func (m model) updateDashboard(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.dashboard.promptHidden = false
 		m.dashboard.focus = dashboardPrompt
 	case "/":
-		m.dashboard.focus = dashboardSearch
+		return m.openCommands(), nil
 	case "f":
 		return m.openDashboardFilter(), nil
 	case "esc":
@@ -237,6 +242,8 @@ func (m model) openDashboardTask(index int) (tea.Model, tea.Cmd) {
 
 func (m model) updateDashboardMouse(hit hitArea, x, y int) (tea.Model, tea.Cmd) {
 	switch hit.action {
+	case "dashboard-sidebar":
+		return m.updateDashboard(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
 	case "dashboard-scope":
 		return m.switchDashboard(hit.index == 1)
 	case "dashboard-level":

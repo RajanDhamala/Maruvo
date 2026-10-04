@@ -62,6 +62,14 @@ func (m model) formView() tea.View {
 		m.drawDeadline(lines)
 	}
 
+	background := "\x1b[48;2;10;10;10m"
+
+	for i, row := range lines {
+		row = ansi.Truncate(row, width, "")
+		lines[i] = background + strings.ReplaceAll(row, "\x1b[0m", "\x1b[0m"+background) +
+			strings.Repeat(" ", max(0, width-ansi.StringWidth(row))) + "\x1b[0m"
+	}
+
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion

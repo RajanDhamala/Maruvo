@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
@@ -118,7 +119,13 @@ func (m model) chatLayout() postLayout {
 		"_",
 		" ",
 	)
+
 	l.rows = append(l.rows, align(muted(status), muted(links), width))
+	if m.workspace.Post.Deadline.DueAt != nil && !time.Now().Before(*m.workspace.Post.Deadline.DueAt) {
+		l.rows[0] = align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))),
+			warning(deadlineLabel(m.workspace.Post.Deadline)), width)
+	}
+
 	x := width - ansi.StringWidth(links)
 	l.hit(x, 1, len(fmt.Sprintf("Files %d", len(m.workspace.Files))), 1, "workspace-tab", 0)
 	l.hit(x+len(fmt.Sprintf("Files %d", len(m.workspace.Files)))+3, 1, 6, 1, "v", 0)

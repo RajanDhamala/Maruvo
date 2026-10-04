@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
@@ -36,6 +37,8 @@ type model struct {
 	homeFocus              int
 	homeInput              textField
 	homePath               string
+	directory              string
+	commands               commandMenu
 	dashboard              dashboardState
 	profileOpen            bool
 	walletAddress          string
@@ -54,6 +57,9 @@ type model struct {
 	picker                 deadlinePicker
 	notice                 string
 	deleting               bool
+	recovering             string
+	recoveryDeadline       time.Time
+	recoveryDelivery       time.Time
 	editingStatus          bool
 	statusChoice           int
 	scroll                 int
@@ -100,5 +106,5 @@ func (m model) Init() tea.Cmd {
 		return m.sendDemo()
 	}
 
-	return m.restoreSession()
+	return tea.Batch(m.restoreSession(), deadlineTick())
 }

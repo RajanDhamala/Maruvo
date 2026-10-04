@@ -13,6 +13,7 @@ func (m model) openPosts(own bool) (tea.Model, tea.Cmd) {
 	m.own, m.loading, m.selected = own, true, 0
 	m.posts, m.err, m.notice = nil, nil, ""
 	m.deleting, m.editingStatus, m.scroll = false, false, 0
+	m.recovering = ""
 	m.profileOpen = false
 	m.picker.open = false
 	m.fundingConfirm = false
@@ -68,6 +69,26 @@ func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.screen == newPostScreen {
 		return m.updateForm(msg)
+	}
+
+	if m.recovering != "" {
+		switch key {
+		case "enter", "y":
+			m.loading, m.err = true, nil
+			return m, m.recoverPost(m.posts[m.selected])
+		case "d":
+			if m.recovering == "reopen" {
+				return m.openDeadline(), nil
+			}
+		case "t":
+			if m.recovering == "reopen" && m.posts[m.selected].DeliverBy != nil {
+				return m.openDeliveryDeadline(), nil
+			}
+		case "esc", "n":
+			m.recovering = ""
+		}
+
+		return m, nil
 	}
 
 	if m.fundingConfirm {
@@ -207,6 +228,10 @@ func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.screen == detailScreen && len(m.posts) != 0 && m.isPoster(m.posts[m.selected]) &&
 			m.posts[m.selected].AcceptedBy == nil {
 			m.deleting = true
+		}
+	case "x", "o":
+		if m.screen == detailScreen && len(m.posts) != 0 {
+			return m.beginRecovery(key)
 		}
 	}
 

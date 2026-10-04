@@ -11,6 +11,7 @@ type postChanged struct {
 	created   bool
 	wallet    string
 	accepted  bool
+	recovered string
 	deletedID int64
 	err       error
 }
@@ -43,5 +44,20 @@ func (m model) deletePost(post api.Post) tea.Cmd {
 	return func() tea.Msg {
 		err := m.client.DeletePost(m.ctx, m.token, post.ID)
 		return postChanged{deletedID: post.ID, err: err}
+	}
+}
+
+func (m model) recoverPost(post api.Post) tea.Cmd {
+	return func() tea.Msg {
+		updated, err := m.client.RecoverPost(
+			m.ctx,
+			m.token,
+			post.ID,
+			m.recovering,
+			m.recoveryDeadline,
+			m.recoveryDelivery,
+		)
+
+		return postChanged{post: updated, recovered: m.recovering, err: err}
 	}
 }

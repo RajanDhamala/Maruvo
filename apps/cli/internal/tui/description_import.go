@@ -91,7 +91,7 @@ func (m model) openDescriptionImport() model {
 	m.form.importing, m.form.focus = true, 3
 	m.form.descriptionSource = descriptionFromFile
 	m.form.path = textField{limit: 4096}
-	m.form.fileSearch = descriptionFileSearch{root: projectDirectory()}
+	m.form.fileSearch = descriptionFileSearch{root: m.localDirectory()}
 	m.err, m.notice = nil, ""
 
 	return m

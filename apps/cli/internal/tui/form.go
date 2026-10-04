@@ -31,6 +31,9 @@ type postForm struct {
 	fileSearch        descriptionFileSearch
 	descriptionFile   string
 	descriptionSource int
+	timings           [3]textField
+	timingOpen        bool
+	timingFocus       int
 }
 
 const (
@@ -41,7 +44,11 @@ const (
 func newPostForm() postForm {
 	deadline := time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04")
 
-	return postForm{fields: [5]textField{
+	return postForm{timings: [3]textField{
+		{value: "24", cursor: 2, limit: 3, digitsOnly: true},
+		{limit: 16},
+		{value: "24", cursor: 2, limit: 3, digitsOnly: true},
+	}, fields: [5]textField{
 		{limit: 500},
 		{value: "0", cursor: 1, limit: 19, digitsOnly: true},
 		{value: deadline, cursor: len(deadline), limit: 16},
@@ -151,19 +158,31 @@ func (f postForm) payload() (api.CreatePostPayload, error) {
 		)
 	}
 
+	funding, delivery, review, err := f.timingPayload(deadline)
+	if err != nil {
+		return api.CreatePostPayload{}, err
+	}
+
 	return api.CreatePostPayload{
-		Title:              title,
-		CostLamports:       cost,
-		EndTime:            deadline.UTC(),
-		Level:              levels[f.level],
-		Description:        description,
-		AcceptanceCriteria: strings.TrimSpace(f.fields[4].value),
-		InputFiles:         []string{},
-		ExpectedOutputs:    []string{},
+		Title:                title,
+		CostLamports:         cost,
+		EndTime:              deadline.UTC(),
+		Level:                levels[f.level],
+		Description:          description,
+		AcceptanceCriteria:   strings.TrimSpace(f.fields[4].value),
+		InputFiles:           []string{},
+		ExpectedOutputs:      []string{},
+		FundingWindowSeconds: funding,
+		DeliverBy:            delivery.UTC(),
+		ReviewWindowSeconds:  review,
 	}, nil
 }
 
 func (m model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.form.timingOpen {
+		return m.updateTimings(msg)
+	}
+
 	if m.form.importing {
 		return m.updateDescriptionImport(msg)
 	}
@@ -182,10 +201,13 @@ func (m model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+o":
 		m = m.openDescriptionImport()
 		return m, m.searchDescriptionFiles()
+	case "ctrl+d":
+		m.form.timingOpen = true
+		return m, nil
 	case "tab", "down":
-		m.form.focus = (m.form.focus + 1) % 8
+		m.form.focus = (m.form.focus + 1) % 9
 	case "shift+tab", "up":
-		m.form.focus = (m.form.focus + 7) % 8
+		m.form.focus = (m.form.focus + 8) % 9
 	case "enter":
 		if m.form.focus == 2 {
 			return m.openDeadline(), nil
@@ -197,6 +219,11 @@ func (m model) updateForm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		if m.form.focus == 7 {
 			return m.openPosts(m.own)
+		}
+
+		if m.form.focus == 8 {
+			m.form.timingOpen = true
+			return m, nil
 		}
 
 		if fileDescription {

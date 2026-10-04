@@ -76,6 +76,16 @@ impl SolanaService for SolanaServer {
             state: self.escrow()?.check(request.into_inner()).await?,
         }))
     }
+
+    async fn check_escrow_recovery(
+        &self,
+        request: Request<CheckEscrowRequest>,
+    ) -> Result<Response<EscrowState>, Status> {
+        Ok(Response::new(EscrowState {
+            state: self.escrow()?.check_recovery(request.into_inner()).await?,
+        }))
+    }
+
     async fn health(
         &self,
         _request: Request<HealthRequest>,

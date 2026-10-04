@@ -37,7 +37,7 @@ func (q *Queries) AppendWorkspaceEvent(ctx context.Context, arg AppendWorkspaceE
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files FROM post_workspaces WHERE post_id = $1
+SELECT post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files, review_by FROM post_workspaces WHERE post_id = $1
 `
 
 func (q *Queries) GetWorkspace(ctx context.Context, postID int64) (PostWorkspace, error) {
@@ -52,12 +52,13 @@ func (q *Queries) GetWorkspace(ctx context.Context, postID int64) (PostWorkspace
 		&i.SubmissionVersion,
 		&i.ReviewNote,
 		&i.DeliveryFiles,
+		&i.ReviewBy,
 	)
 	return i, err
 }
 
 const getWorkspaceFile = `-- name: GetWorkspaceFile :one
-SELECT id, post_id, uploaded_by, name, size, sha256, content, created_at, purpose FROM workspace_files WHERE id = $1 AND post_id = $2
+SELECT id, post_id, uploaded_by, name, size, sha256, content, created_at, purpose, agent_grant_id FROM workspace_files WHERE id = $1 AND post_id = $2
 `
 
 type GetWorkspaceFileParams struct {
@@ -78,6 +79,7 @@ func (q *Queries) GetWorkspaceFile(ctx context.Context, arg GetWorkspaceFilePara
 		&i.Content,
 		&i.CreatedAt,
 		&i.Purpose,
+		&i.AgentGrantID,
 	)
 	return i, err
 }
@@ -120,19 +122,20 @@ func (q *Queries) ListWorkspaceEvents(ctx context.Context, arg ListWorkspaceEven
 }
 
 const listWorkspaceFiles = `-- name: ListWorkspaceFiles :many
-SELECT id, post_id, uploaded_by, name, size, sha256, created_at, purpose
+SELECT id, post_id, uploaded_by, name, size, sha256, created_at, purpose, agent_grant_id
 FROM workspace_files WHERE post_id = $1 ORDER BY created_at, id
 `
 
 type ListWorkspaceFilesRow struct {
-	ID         pgtype.UUID        `json:"id"`
-	PostID     int64              `json:"post_id"`
-	UploadedBy int64              `json:"uploaded_by"`
-	Name       string             `json:"name"`
-	Size       int64              `json:"size"`
-	Sha256     string             `json:"sha256"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	Purpose    string             `json:"purpose"`
+	ID           pgtype.UUID        `json:"id"`
+	PostID       int64              `json:"post_id"`
+	UploadedBy   int64              `json:"uploaded_by"`
+	Name         string             `json:"name"`
+	Size         int64              `json:"size"`
+	Sha256       string             `json:"sha256"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Purpose      string             `json:"purpose"`
+	AgentGrantID pgtype.UUID        `json:"agent_grant_id"`
 }
 
 func (q *Queries) ListWorkspaceFiles(ctx context.Context, postID int64) ([]ListWorkspaceFilesRow, error) {
@@ -153,6 +156,47 @@ func (q *Queries) ListWorkspaceFiles(ctx context.Context, postID int64) ([]ListW
 			&i.Sha256,
 			&i.CreatedAt,
 			&i.Purpose,
+			&i.AgentGrantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkspaceHistory = `-- name: ListWorkspaceHistory :many
+SELECT post_id, id, actor_id, kind, data, created_at, stream_id FROM workspace_events
+WHERE post_id = $1 AND ($2::bigint = 0 OR id < $2::bigint)
+ORDER BY id DESC LIMIT $3::integer
+`
+
+type ListWorkspaceHistoryParams struct {
+	PostID   int64 `json:"post_id"`
+	BeforeID int64 `json:"before_id"`
+	PageSize int32 `json:"page_size"`
+}
+
+func (q *Queries) ListWorkspaceHistory(ctx context.Context, arg ListWorkspaceHistoryParams) ([]WorkspaceEvent, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceHistory, arg.PostID, arg.BeforeID, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkspaceEvent
+	for rows.Next() {
+		var i WorkspaceEvent
+		if err := rows.Scan(
+			&i.PostID,
+			&i.ID,
+			&i.ActorID,
+			&i.Kind,
+			&i.Data,
+			&i.CreatedAt,
+			&i.StreamID,
 		); err != nil {
 			return nil, err
 		}
@@ -197,19 +241,20 @@ func (q *Queries) RecentWorkspaceEvents(ctx context.Context, postID int64) ([]Wo
 }
 
 const saveWorkspaceFile = `-- name: SaveWorkspaceFile :exec
-INSERT INTO workspace_files (id, post_id, uploaded_by, name, size, sha256, content, purpose)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO workspace_files (id, post_id, uploaded_by, name, size, sha256, content, purpose, agent_grant_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type SaveWorkspaceFileParams struct {
-	ID         pgtype.UUID `json:"id"`
-	PostID     int64       `json:"post_id"`
-	UploadedBy int64       `json:"uploaded_by"`
-	Name       string      `json:"name"`
-	Size       int64       `json:"size"`
-	Sha256     string      `json:"sha256"`
-	Content    []byte      `json:"content"`
-	Purpose    string      `json:"purpose"`
+	ID           pgtype.UUID `json:"id"`
+	PostID       int64       `json:"post_id"`
+	UploadedBy   int64       `json:"uploaded_by"`
+	Name         string      `json:"name"`
+	Size         int64       `json:"size"`
+	Sha256       string      `json:"sha256"`
+	Content      []byte      `json:"content"`
+	Purpose      string      `json:"purpose"`
+	AgentGrantID pgtype.UUID `json:"agent_grant_id"`
 }
 
 func (q *Queries) SaveWorkspaceFile(ctx context.Context, arg SaveWorkspaceFileParams) error {
@@ -222,14 +267,18 @@ func (q *Queries) SaveWorkspaceFile(ctx context.Context, arg SaveWorkspaceFilePa
 		arg.Sha256,
 		arg.Content,
 		arg.Purpose,
+		arg.AgentGrantID,
 	)
 	return err
 }
 
 const submitWorkspace = `-- name: SubmitWorkspace :one
 UPDATE post_workspaces SET submitted_at = NOW(), submission = $2,
-    submission_version = submission_version + 1, review_state = 'submitted', review_note = '', delivery_files = $3
-WHERE post_id = $1 AND review_state IN ('working', 'changes_requested') RETURNING post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files
+    submission_version = submission_version + 1, review_state = 'submitted', review_note = '', delivery_files = $3,
+    review_by = CASE WHEN p.review_window_seconds > 0 THEN NOW() + p.review_window_seconds * INTERVAL '1 second' END
+FROM posts p
+WHERE post_workspaces.post_id = $1 AND p.id = post_workspaces.post_id
+    AND review_state IN ('working', 'changes_requested') RETURNING post_workspaces.post_id, post_workspaces.last_event_id, post_workspaces.submitted_at, post_workspaces.submission, post_workspaces.review_state, post_workspaces.submission_version, post_workspaces.review_note, post_workspaces.delivery_files, post_workspaces.review_by
 `
 
 type SubmitWorkspaceParams struct {
@@ -250,6 +299,7 @@ func (q *Queries) SubmitWorkspace(ctx context.Context, arg SubmitWorkspaceParams
 		&i.SubmissionVersion,
 		&i.ReviewNote,
 		&i.DeliveryFiles,
+		&i.ReviewBy,
 	)
 	return i, err
 }
