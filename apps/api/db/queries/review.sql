@@ -3,11 +3,11 @@ SELECT EXISTS(SELECT 1 FROM post_escrows e JOIN wallets w ON w.address = e.revie
     WHERE e.post_id = $1 AND w.user_id = $2)::boolean AS allowed;
 
 -- name: RequestWorkspaceChanges :one
-UPDATE post_workspaces SET review_state = 'changes_requested', review_note = $2
+UPDATE post_workspaces SET review_state = 'changes_requested', review_note = $2, review_by = NULL
 WHERE post_id = $1 AND review_state = 'submitted' RETURNING *;
 
 -- name: CloseWorkspaceReview :exec
-UPDATE post_workspaces SET review_state = $2
+UPDATE post_workspaces SET review_state = $2, review_by = NULL
 WHERE post_id = $1 AND review_state <> $2;
 
 -- name: GetPostSettlement :one

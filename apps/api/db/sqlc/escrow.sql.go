@@ -13,13 +13,14 @@ import (
 
 const acceptPost = `-- name: AcceptPost :one
 UPDATE posts SET accepted_by = $1, accepted_at = NOW(),
+    fund_by = CASE WHEN funding_window_seconds > 0 THEN NOW() + funding_window_seconds * INTERVAL '1 second' END,
     poster_wallet = poster.address, worker_wallet = worker.address,
     status = 'negotiating', updated_at = NOW()
 FROM wallets AS poster, wallets AS worker
 WHERE posts.id = $2 AND posts.user_id <> $1
     AND posts.status = 'open' AND posts.accepted_by IS NULL AND posts.end_time > NOW()
     AND poster.user_id = posts.user_id AND worker.user_id = $1
-RETURNING posts.id, posts.user_id, posts.title, posts.cost_lamports, posts.end_time, posts.status, posts.level, posts.created_at, posts.updated_at, posts.accepted_by, posts.accepted_at, posts.poster_wallet, posts.worker_wallet, posts.description, posts.acceptance_criteria, posts.input_files, posts.expected_outputs
+RETURNING posts.id, posts.user_id, posts.title, posts.cost_lamports, posts.end_time, posts.status, posts.level, posts.created_at, posts.updated_at, posts.accepted_by, posts.accepted_at, posts.poster_wallet, posts.worker_wallet, posts.description, posts.acceptance_criteria, posts.input_files, posts.expected_outputs, posts.reopened_as, posts.funding_window_seconds, posts.fund_by, posts.deliver_by, posts.review_window_seconds
 `
 
 type AcceptPostParams struct {
@@ -48,6 +49,11 @@ func (q *Queries) AcceptPost(ctx context.Context, arg AcceptPostParams) (Post, e
 		&i.AcceptanceCriteria,
 		&i.InputFiles,
 		&i.ExpectedOutputs,
+		&i.ReopenedAs,
+		&i.FundingWindowSeconds,
+		&i.FundBy,
+		&i.DeliverBy,
+		&i.ReviewWindowSeconds,
 	)
 	return i, err
 }
@@ -70,7 +76,7 @@ func (q *Queries) ConsumeWalletChallenge(ctx context.Context, arg ConsumeWalletC
 }
 
 const getPost = `-- name: GetPost :one
-SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs FROM posts WHERE id = $1
+SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds FROM posts WHERE id = $1
 `
 
 func (q *Queries) GetPost(ctx context.Context, id int64) (Post, error) {
@@ -94,6 +100,11 @@ func (q *Queries) GetPost(ctx context.Context, id int64) (Post, error) {
 		&i.AcceptanceCriteria,
 		&i.InputFiles,
 		&i.ExpectedOutputs,
+		&i.ReopenedAs,
+		&i.FundingWindowSeconds,
+		&i.FundBy,
+		&i.DeliverBy,
+		&i.ReviewWindowSeconds,
 	)
 	return i, err
 }
@@ -171,7 +182,7 @@ func (q *Queries) LinkWallet(ctx context.Context, arg LinkWalletParams) (Wallet,
 }
 
 const lockPost = `-- name: LockPost :one
-SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs FROM posts WHERE id = $1 FOR UPDATE
+SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds FROM posts WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockPost(ctx context.Context, id int64) (Post, error) {
@@ -195,6 +206,11 @@ func (q *Queries) LockPost(ctx context.Context, id int64) (Post, error) {
 		&i.AcceptanceCriteria,
 		&i.InputFiles,
 		&i.ExpectedOutputs,
+		&i.ReopenedAs,
+		&i.FundingWindowSeconds,
+		&i.FundBy,
+		&i.DeliverBy,
+		&i.ReviewWindowSeconds,
 	)
 	return i, err
 }
@@ -242,7 +258,7 @@ func (q *Queries) MarkEscrowSubmitted(ctx context.Context, arg MarkEscrowSubmitt
 
 const markPostFunded = `-- name: MarkPostFunded :one
 UPDATE posts SET status = 'in_progress', updated_at = NOW()
-WHERE id = $1 AND accepted_by IS NOT NULL AND status = 'negotiating' RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs
+WHERE id = $1 AND accepted_by IS NOT NULL AND status = 'negotiating' RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds
 `
 
 func (q *Queries) MarkPostFunded(ctx context.Context, id int64) (Post, error) {
@@ -266,12 +282,17 @@ func (q *Queries) MarkPostFunded(ctx context.Context, id int64) (Post, error) {
 		&i.AcceptanceCriteria,
 		&i.InputFiles,
 		&i.ExpectedOutputs,
+		&i.ReopenedAs,
+		&i.FundingWindowSeconds,
+		&i.FundBy,
+		&i.DeliverBy,
+		&i.ReviewWindowSeconds,
 	)
 	return i, err
 }
 
 const markPostSettled = `-- name: MarkPostSettled :one
-UPDATE posts SET status = $2, updated_at = NOW() WHERE id = $1 AND accepted_by IS NOT NULL RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs
+UPDATE posts SET status = $2, updated_at = NOW() WHERE id = $1 AND accepted_by IS NOT NULL RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds
 `
 
 type MarkPostSettledParams struct {
@@ -300,6 +321,11 @@ func (q *Queries) MarkPostSettled(ctx context.Context, arg MarkPostSettledParams
 		&i.AcceptanceCriteria,
 		&i.InputFiles,
 		&i.ExpectedOutputs,
+		&i.ReopenedAs,
+		&i.FundingWindowSeconds,
+		&i.FundBy,
+		&i.DeliverBy,
+		&i.ReviewWindowSeconds,
 	)
 	return i, err
 }

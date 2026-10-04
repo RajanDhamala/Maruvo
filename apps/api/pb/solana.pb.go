@@ -896,13 +896,14 @@ const file_solana_proto_rawDesc = "" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"B\n" +
 	"\fDemoResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x18\n" +
-	"\aservice\x18\x02 \x01(\tR\aservice2\xe7\x03\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice2\xaf\x04\n" +
 	"\rSolanaService\x127\n" +
 	"\x06Health\x12\x15.maruvo.HealthRequest\x1a\x16.maruvo.HealthResponse\x121\n" +
 	"\x04Demo\x12\x13.maruvo.DemoRequest\x1a\x14.maruvo.DemoResponse\x12E\n" +
 	"\rPrepareEscrow\x12\x1c.maruvo.PrepareEscrowRequest\x1a\x16.maruvo.PreparedEscrow\x12D\n" +
 	"\fSubmitEscrow\x12\x1b.maruvo.SubmitEscrowRequest\x1a\x17.maruvo.SubmittedEscrow\x12>\n" +
-	"\vCheckEscrow\x12\x1a.maruvo.CheckEscrowRequest\x1a\x13.maruvo.EscrowState\x12Q\n" +
+	"\vCheckEscrow\x12\x1a.maruvo.CheckEscrowRequest\x1a\x13.maruvo.EscrowState\x12F\n" +
+	"\x13CheckEscrowRecovery\x12\x1a.maruvo.CheckEscrowRequest\x1a\x13.maruvo.EscrowState\x12Q\n" +
 	"\x11PrepareSettlement\x12 .maruvo.PrepareSettlementRequest\x1a\x1a.maruvo.PreparedSettlement\x12J\n" +
 	"\x0fCheckSettlement\x12\x1e.maruvo.CheckSettlementRequest\x1a\x17.maruvo.SettlementStateB&Z$github.com/rajandhamala/Maruvo/pb;pbb\x06proto3"
 
@@ -944,17 +945,19 @@ var file_solana_proto_depIdxs = []int32{
 	4,  // 5: maruvo.SolanaService.PrepareEscrow:input_type -> maruvo.PrepareEscrowRequest
 	6,  // 6: maruvo.SolanaService.SubmitEscrow:input_type -> maruvo.SubmitEscrowRequest
 	8,  // 7: maruvo.SolanaService.CheckEscrow:input_type -> maruvo.CheckEscrowRequest
-	0,  // 8: maruvo.SolanaService.PrepareSettlement:input_type -> maruvo.PrepareSettlementRequest
-	2,  // 9: maruvo.SolanaService.CheckSettlement:input_type -> maruvo.CheckSettlementRequest
-	11, // 10: maruvo.SolanaService.Health:output_type -> maruvo.HealthResponse
-	13, // 11: maruvo.SolanaService.Demo:output_type -> maruvo.DemoResponse
-	5,  // 12: maruvo.SolanaService.PrepareEscrow:output_type -> maruvo.PreparedEscrow
-	7,  // 13: maruvo.SolanaService.SubmitEscrow:output_type -> maruvo.SubmittedEscrow
-	9,  // 14: maruvo.SolanaService.CheckEscrow:output_type -> maruvo.EscrowState
-	1,  // 15: maruvo.SolanaService.PrepareSettlement:output_type -> maruvo.PreparedSettlement
-	3,  // 16: maruvo.SolanaService.CheckSettlement:output_type -> maruvo.SettlementState
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
+	8,  // 8: maruvo.SolanaService.CheckEscrowRecovery:input_type -> maruvo.CheckEscrowRequest
+	0,  // 9: maruvo.SolanaService.PrepareSettlement:input_type -> maruvo.PrepareSettlementRequest
+	2,  // 10: maruvo.SolanaService.CheckSettlement:input_type -> maruvo.CheckSettlementRequest
+	11, // 11: maruvo.SolanaService.Health:output_type -> maruvo.HealthResponse
+	13, // 12: maruvo.SolanaService.Demo:output_type -> maruvo.DemoResponse
+	5,  // 13: maruvo.SolanaService.PrepareEscrow:output_type -> maruvo.PreparedEscrow
+	7,  // 14: maruvo.SolanaService.SubmitEscrow:output_type -> maruvo.SubmittedEscrow
+	9,  // 15: maruvo.SolanaService.CheckEscrow:output_type -> maruvo.EscrowState
+	9,  // 16: maruvo.SolanaService.CheckEscrowRecovery:output_type -> maruvo.EscrowState
+	1,  // 17: maruvo.SolanaService.PrepareSettlement:output_type -> maruvo.PreparedSettlement
+	3,  // 18: maruvo.SolanaService.CheckSettlement:output_type -> maruvo.SettlementState
+	11, // [11:19] is the sub-list for method output_type
+	3,  // [3:11] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name

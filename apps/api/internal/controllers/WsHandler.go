@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	db "github.com/rajandhamala/Maruvo/db/sqlc"
-	"github.com/rajandhamala/Maruvo/internal/utils"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -138,9 +137,8 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 
 	lastPing := time.Now()
 
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	for ctx.Err() == nil {
-		if _, err := utils.VerifyUserToken(token); err != nil {
+		if err := c.checkSession(ctx, r); err != nil {
 			conn.WriteControl(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session expired"),
 				time.Now().Add(writeWait))
@@ -154,6 +152,10 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 			Block:   5 * time.Second,
 		}).Result()
 		if err != nil && !errors.Is(err, redis.Nil) {
+			return
+		}
+
+		if c.checkSession(ctx, r) != nil {
 			return
 		}
 

@@ -18,15 +18,18 @@ import (
 )
 
 type CreatePostPayload struct {
-	Title              string        `json:"title"`
-	CostLamports       int64         `json:"cost_lamports"`
-	EndTime            time.Time     `json:"end_time"`
-	Status             db.PostStatus `json:"status"`
-	Level              db.PostLevel  `json:"level"`
-	Description        string        `json:"description"`
-	AcceptanceCriteria string        `json:"acceptance_criteria"`
-	InputFiles         []string      `json:"input_files"`
-	ExpectedOutputs    []string      `json:"expected_outputs"`
+	Title                string        `json:"title"`
+	CostLamports         int64         `json:"cost_lamports"`
+	EndTime              time.Time     `json:"end_time"`
+	Status               db.PostStatus `json:"status"`
+	Level                db.PostLevel  `json:"level"`
+	Description          string        `json:"description"`
+	AcceptanceCriteria   string        `json:"acceptance_criteria"`
+	InputFiles           []string      `json:"input_files"`
+	ExpectedOutputs      []string      `json:"expected_outputs"`
+	FundingWindowSeconds int64         `json:"funding_window_seconds"`
+	DeliverBy            time.Time     `json:"deliver_by"`
+	ReviewWindowSeconds  int64         `json:"review_window_seconds"`
 }
 
 type DeletePostPayload struct {
@@ -65,6 +68,8 @@ func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload.Title = strings.TrimSpace(payload.Title)
+	payload.EndTime = payload.EndTime.UTC().Truncate(time.Microsecond)
+	payload.DeliverBy = payload.DeliverBy.UTC().Truncate(time.Microsecond)
 
 	payload.AcceptanceCriteria = strings.TrimSpace(payload.AcceptanceCriteria)
 	if strings.TrimSpace(payload.Description) == "" ||
@@ -110,17 +115,29 @@ func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateTaskTiming(payload.EndTime, payload.DeliverBy,
+		payload.FundingWindowSeconds, payload.ReviewWindowSeconds); err != nil {
+		postJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+
 	post, err := c.queries.CreatePost(r.Context(), db.CreatePostParams{
-		UserID:             userID,
-		Title:              payload.Title,
-		CostLamports:       payload.CostLamports,
-		EndTime:            pgtype.Timestamptz{Time: payload.EndTime, Valid: true},
-		Status:             payload.Status,
-		Level:              payload.Level,
-		Description:        payload.Description,
-		AcceptanceCriteria: payload.AcceptanceCriteria,
-		InputFiles:         payload.InputFiles,
-		ExpectedOutputs:    payload.ExpectedOutputs,
+		UserID:               userID,
+		Title:                payload.Title,
+		CostLamports:         payload.CostLamports,
+		EndTime:              pgtype.Timestamptz{Time: payload.EndTime, Valid: true},
+		Status:               payload.Status,
+		Level:                payload.Level,
+		Description:          payload.Description,
+		AcceptanceCriteria:   payload.AcceptanceCriteria,
+		InputFiles:           payload.InputFiles,
+		ExpectedOutputs:      payload.ExpectedOutputs,
+		FundingWindowSeconds: payload.FundingWindowSeconds,
+		DeliverBy: pgtype.Timestamptz{
+			Time:  payload.DeliverBy.UTC().Truncate(time.Microsecond),
+			Valid: !payload.DeliverBy.IsZero(),
+		},
+		ReviewWindowSeconds: payload.ReviewWindowSeconds,
 	})
 	if err != nil {
 		log.Printf("create post: %v", err)

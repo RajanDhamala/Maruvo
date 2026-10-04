@@ -21,6 +21,7 @@ RETURNING *;
 
 -- name: AcceptPost :one
 UPDATE posts SET accepted_by = sqlc.arg(worker_id), accepted_at = NOW(),
+    fund_by = CASE WHEN funding_window_seconds > 0 THEN NOW() + funding_window_seconds * INTERVAL '1 second' END,
     poster_wallet = poster.address, worker_wallet = worker.address,
     status = 'negotiating', updated_at = NOW()
 FROM wallets AS poster, wallets AS worker

@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	controller "github.com/rajandhamala/Maruvo/internal/controllers"
-	middleware "github.com/rajandhamala/Maruvo/internal/middlewares"
 )
 
 func UserRouter(app *http.ServeMux, ctrl *controller.Controller) {
@@ -13,6 +12,6 @@ func UserRouter(app *http.ServeMux, ctrl *controller.Controller) {
 		return
 	})
 
-	app.HandleFunc("GET /ws", middleware.Auth(ctrl.WsHandler))
+	app.HandleFunc("GET /ws", ctrl.Auth(ctrl.WsHandler))
 	app.HandleFunc("POST /demo", ctrl.Demo)
 }
