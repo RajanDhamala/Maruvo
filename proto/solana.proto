@@ -11,6 +11,7 @@ service SolanaService {
     rpc PrepareEscrow (PrepareEscrowRequest) returns (PreparedEscrow);
     rpc SubmitEscrow (SubmitEscrowRequest) returns (SubmittedEscrow);
     rpc CheckEscrow (CheckEscrowRequest) returns (EscrowState);
+    rpc CheckEscrowRecovery (CheckEscrowRequest) returns (EscrowState);
     rpc PrepareSettlement (PrepareSettlementRequest) returns (PreparedSettlement);
     rpc CheckSettlement (CheckSettlementRequest) returns (SettlementState);
 }
