@@ -24,8 +24,13 @@ func (m model) deadlineLayout() postLayout {
 		zoneDate = value
 	}
 
+	title := "Accept by"
+	if p.delivery {
+		title = "Deliver by"
+	}
+
 	l := postLayout{
-		rows: []string{align(bold("Choose deadline"), muted("Local · UTC"+zoneDate.Format("-07:00")), width)},
+		rows: []string{align(bold(title), muted("Local · UTC"+zoneDate.Format("-07:00")), width)},
 	}
 	x := (width - 28) / 2
 	month := p.date.Format("January 2006")

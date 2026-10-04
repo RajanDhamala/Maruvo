@@ -10,14 +10,15 @@ import (
 )
 
 type User struct {
-	ID              string `json:"id"`
-	Username        string `json:"username"`
-	Email           string `json:"email"`
-	Avatar          string `json:"avatar"`
-	GitHubLogin     string `json:"github_login"`
-	GitHubURL       string `json:"github_url"`
-	GoogleConnected bool   `json:"google_connected"`
-	GitHubConnected bool   `json:"github_connected"`
+	AgentAccess     *AgentGrant `json:"agent_access,omitempty"`
+	ID              string      `json:"id"`
+	Username        string      `json:"username"`
+	Email           string      `json:"email"`
+	Avatar          string      `json:"avatar"`
+	GitHubLogin     string      `json:"github_login"`
+	GitHubURL       string      `json:"github_url"`
+	GoogleConnected bool        `json:"google_connected"`
+	GitHubConnected bool        `json:"github_connected"`
 }
 
 func (c *Client) ExchangeCLICode(ctx context.Context, code, verifier string) (string, error) {

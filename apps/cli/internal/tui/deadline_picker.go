@@ -10,12 +10,13 @@ import (
 )
 
 type deadlinePicker struct {
-	open    bool
-	date    time.Time
-	clock   [2]textField
-	focus   int
-	replace bool
-	err     string
+	open     bool
+	date     time.Time
+	clock    [2]textField
+	focus    int
+	replace  bool
+	err      string
+	delivery bool
 }
 
 func day(date time.Time) time.Time {
@@ -24,12 +25,47 @@ func day(date time.Time) time.Time {
 
 func (m model) openDeadline() model {
 	date, err := time.ParseInLocation("2006-01-02 15:04", m.form.fields[2].value, time.Local)
+	if m.recovering == "reopen" {
+		date, err = m.recoveryDeadline, nil
+	} else {
+		m.form.focus = 2
+	}
+
 	if err != nil || !date.After(time.Now()) {
 		date = time.Now().Add(24 * time.Hour)
 	}
 
-	m.form.focus, m.profileOpen = 2, false
+	m.profileOpen = false
 	m.picker = deadlinePicker{open: true, date: day(date), clock: [2]textField{
+		{value: date.Format("15"), cursor: 2, limit: 2},
+		{value: date.Format("04"), cursor: 2, limit: 2},
+	}}
+
+	return m
+}
+
+func (m model) openDeliveryDeadline() model {
+	date, err := time.ParseInLocation("2006-01-02 15:04", m.form.timings[1].value, time.Local)
+	if m.recovering == "reopen" {
+		date, err = m.recoveryDelivery, nil
+	}
+
+	if err != nil || !date.After(time.Now()) {
+		acceptBy, _ := time.ParseInLocation("2006-01-02 15:04", m.form.fields[2].value, time.Local)
+
+		funding, _ := strconv.ParseInt(m.form.timings[0].value, 10, 64)
+		if m.recovering == "reopen" {
+			acceptBy, funding = m.recoveryDeadline, m.posts[m.selected].FundingWindowSeconds/3600
+		}
+
+		date = acceptBy.Add(time.Duration(funding+24) * time.Hour)
+		if !date.After(time.Now()) {
+			date = time.Now().Add(72 * time.Hour)
+		}
+	}
+
+	m.profileOpen = false
+	m.picker = deadlinePicker{open: true, delivery: true, date: day(date), clock: [2]textField{
 		{value: date.Format("15"), cursor: 2, limit: 2},
 		{value: date.Format("04"), cursor: 2, limit: 2},
 	}}
@@ -125,9 +161,21 @@ func (m model) applyDeadline() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	field := &m.form.fields[2]
-	field.value = date.Format("2006-01-02 15:04")
-	field.cursor = len(field.value)
+	if m.picker.delivery {
+		if m.recovering == "reopen" {
+			m.recoveryDelivery = date
+		} else {
+			m.form.timings[1].value = date.Format("2006-01-02 15:04")
+			m.form.timings[1].cursor = len(m.form.timings[1].value)
+		}
+	} else if m.recovering == "reopen" {
+		m.recoveryDeadline = date
+	} else {
+		field := &m.form.fields[2]
+		field.value = date.Format("2006-01-02 15:04")
+		field.cursor = len(field.value)
+	}
+
 	m.picker.open, m.err = false, nil
 
 	return m, nil

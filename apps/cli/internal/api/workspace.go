@@ -28,14 +28,15 @@ type WorkspaceEvent struct {
 }
 
 type WorkspaceFile struct {
-	Purpose    string    `json:"purpose"`
-	ID         string    `json:"id"`
-	PostID     int64     `json:"post_id"`
-	UploadedBy int64     `json:"uploaded_by"`
-	Name       string    `json:"name"`
-	Size       int64     `json:"size"`
-	SHA256     string    `json:"sha256"`
-	CreatedAt  time.Time `json:"created_at"`
+	AgentGrantID *string   `json:"agent_grant_id,omitempty"`
+	Purpose      string    `json:"purpose"`
+	ID           string    `json:"id"`
+	PostID       int64     `json:"post_id"`
+	UploadedBy   int64     `json:"uploaded_by"`
+	Name         string    `json:"name"`
+	Size         int64     `json:"size"`
+	SHA256       string    `json:"sha256"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type WorkspaceState struct {
@@ -43,6 +44,7 @@ type WorkspaceState struct {
 	PostID            int64      `json:"post_id"`
 	LastEventID       int64      `json:"last_event_id"`
 	SubmittedAt       *time.Time `json:"submitted_at"`
+	ReviewBy          *time.Time `json:"review_by"`
 	Submission        string     `json:"submission"`
 	ReviewState       string     `json:"review_state"`
 	SubmissionVersion int64      `json:"submission_version"`
@@ -50,6 +52,7 @@ type WorkspaceState struct {
 }
 
 type Workspace struct {
+	Context    TaskContext      `json:"context"`
 	Cursor     string           `json:"cursor"`
 	Post       Post             `json:"post"`
 	Escrow     Escrow           `json:"escrow"`
@@ -58,6 +61,21 @@ type Workspace struct {
 	Events     []WorkspaceEvent `json:"events"`
 	CanReview  bool             `json:"can_review"`
 	Settlement Settlement       `json:"settlement"`
+}
+
+type MessageReceipt struct {
+	Status    string `json:"status"`
+	MessageID string `json:"message_id"`
+	StreamID  string `json:"stream_id"`
+}
+
+type WorkspaceReceipt struct {
+	Status            string   `json:"status"`
+	EventID           int64    `json:"event_id"`
+	PostID            int64    `json:"post_id"`
+	SubmissionVersion int64    `json:"submission_version"`
+	ReviewState       string   `json:"review_state"`
+	DeliveryFiles     []string `json:"delivery_files,omitempty"`
 }
 
 func workspacePath(id int64) string { return fmt.Sprintf("/posts/%d", id) }
@@ -77,6 +95,22 @@ func (c *Client) SendMessage(
 	text string,
 	messageID ...string,
 ) error {
+	return c.sendMessage(ctx, token, id, text, nil, messageID...)
+}
+
+func (c *Client) SendMessageReceipt(
+	ctx context.Context, token string, id int64, text, messageID string,
+) (MessageReceipt, error) {
+	receipt := MessageReceipt{Status: "ok"}
+
+	err := c.sendMessage(ctx, token, id, text, &receipt, messageID)
+
+	return receipt, err
+}
+
+func (c *Client) sendMessage(
+	ctx context.Context, token string, id int64, text string, result any, messageID ...string,
+) error {
 	key := ""
 	if len(messageID) > 0 {
 		key = messageID[0]
@@ -88,7 +122,7 @@ func (c *Client) SendMessage(
 
 	for attempt := 0; ; attempt++ {
 		err := c.requestJSON(ctx, http.MethodPost, workspacePath(id)+"/messages", token,
-			map[string]string{"text": text, "message_id": key}, nil)
+			map[string]string{"text": text, "message_id": key}, result)
 
 		var failure *Error
 		if err == nil || attempt == 1 || ctx.Err() != nil ||
@@ -115,6 +149,36 @@ func (c *Client) SubmitWork(ctx context.Context, token string, id int64, note st
 		map[string]string{"note": note},
 		nil,
 	)
+}
+
+func (c *Client) SubmitWorkReceipt(
+	ctx context.Context,
+	token string,
+	id int64,
+	note string,
+) (WorkspaceReceipt, error) {
+	receipt := WorkspaceReceipt{Status: "ok"}
+
+	err := c.requestJSON(ctx, http.MethodPost, workspacePath(id)+"/submit", token,
+		map[string]string{"note": note}, &receipt)
+
+	return receipt, err
+}
+
+func (c *Client) SubmitDeliveryReceipt(
+	ctx context.Context, token string, id, version int64, note string, files, inputs []string,
+) (WorkspaceReceipt, error) {
+	receipt := WorkspaceReceipt{Status: "ok"}
+
+	if inputs == nil {
+		inputs = []string{}
+	}
+
+	err := c.requestJSON(ctx, http.MethodPost, workspacePath(id)+"/submit", token,
+		map[string]any{"note": note, "submission_version": version, "files": files, "input_files": inputs},
+		&receipt)
+
+	return receipt, err
 }
 
 func (c *Client) SubmitDelivery(

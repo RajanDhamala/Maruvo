@@ -36,6 +36,10 @@ var homeWordmarkCompact = []string{
 func currentHomePath() string {
 	path, _ := os.Getwd()
 
+	return displayHomePath(path)
+}
+
+func displayHomePath(path string) string {
 	home, _ := os.UserHomeDir()
 	if home != "" && (path == home || strings.HasPrefix(path, home+string(os.PathSeparator))) {
 		path = "~" + strings.TrimPrefix(path, home)
@@ -169,7 +173,7 @@ func (m model) authLayout() postLayout {
 	drawOverlay(width, l.rows, hitArea{x: x, y: inputY, width: paneWidth, height: homePromptHeight}, rows)
 	l.hit(x, inputY, paneWidth, homePromptHeight, "prompt", 0)
 
-	hint := "Tab select · Ctrl+g GitHub · Ctrl+o Google"
+	hint := "/ commands · Tab select · Ctrl+g GitHub · Ctrl+o Google"
 	if m.loading {
 		hint = "Waiting for sign-in · Ctrl+c quit"
 	}

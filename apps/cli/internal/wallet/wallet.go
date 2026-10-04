@@ -85,9 +85,17 @@ func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
 	if post.AcceptedBy == nil || post.CostLamports < 0 || plan.ProgramID != ProgramID ||
 		(plan.Network != "devnet" && plan.Network != "localnet") ||
 		plan.State != "prepared" ||
-		(plan.AgreementVersion != 1 && plan.AgreementVersion != 2) ||
+		(plan.AgreementVersion != 1 && plan.AgreementVersion != 2 && plan.AgreementVersion != 3) ||
+		(post.DeliverBy != nil && plan.AgreementVersion != 3) ||
 		w.Address() != post.PosterWallet {
 		return "", errors.New("wallet, network, or escrow program does not match this funding request")
+	}
+
+	if plan.AgreementVersion == 3 && (post.FundBy == nil || post.DeliverBy == nil ||
+		post.FundingWindowSeconds < 60 || post.FundingWindowSeconds > 30*86400 ||
+		post.ReviewWindowSeconds < 60 || post.ReviewWindowSeconds > 30*86400 ||
+		!post.DeliverBy.After(*post.FundBy)) {
+		return "", errors.New("deadline terms are missing or invalid")
 	}
 
 	data, err := base64.StdEncoding.DecodeString(plan.Transaction)
@@ -155,14 +163,37 @@ func agreementHash(post api.Post, version int32) [32]byte {
 		post.Level,
 		post.Title,
 	)
-	if version == 2 {
-		data, _ := json.Marshal([]any{
+	if version == 2 || version == 3 {
+		values := []any{
 			"maruvo-escrow-v2", post.ID, post.UserID, *post.AcceptedBy,
 			post.PosterWallet, post.WorkerWallet, post.CostLamports,
 			post.EndTime.UTC().Format(time.RFC3339Nano), post.Level, post.Title,
 			post.Description, post.AcceptanceCriteria,
 			append([]string{}, post.InputFiles...), append([]string{}, post.ExpectedOutputs...),
-		})
+		}
+
+		if version == 3 {
+			fundBy, deliverBy := time.Time{}, time.Time{}
+			if post.FundBy != nil {
+				fundBy = *post.FundBy
+			}
+
+			if post.DeliverBy != nil {
+				deliverBy = *post.DeliverBy
+			}
+
+			values[0] = "maruvo-escrow-v3"
+			values = append(
+				values,
+				post.FundingWindowSeconds,
+				fundBy.UTC().
+					Format(time.RFC3339Nano),
+				deliverBy.UTC().Format(time.RFC3339Nano),
+				post.ReviewWindowSeconds,
+			)
+		}
+
+		data, _ := json.Marshal(values)
 		terms = string(data)
 	}
 

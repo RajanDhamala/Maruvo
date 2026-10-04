@@ -52,7 +52,7 @@ func (m *model) stopWorkspace() {
 
 func (m model) openWorkspace(action string) (tea.Model, tea.Cmd) {
 	if m.workspace.Post.ID != m.posts[m.selected].ID || m.composer.root == "" {
-		m.composer = chatComposer{draft: textField{limit: 4000}, root: projectDirectory()}
+		m.composer = chatComposer{draft: textField{limit: 4000}, root: m.localDirectory()}
 	}
 
 	m.stopWorkspace()
@@ -230,6 +230,10 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		Signature         string     `json:"signature"`
 		Note              string     `json:"note"`
 		SubmittedAt       *time.Time `json:"submitted_at"`
+		ReviewBy          *time.Time `json:"review_by"`
+		Stage             string     `json:"stage"`
+		DueAt             *time.Time `json:"due_at"`
+		RecoveryAction    string     `json:"recovery_action"`
 		SubmissionVersion int64      `json:"submission_version"`
 		ReviewState       string     `json:"review_state"`
 		Purpose           string     `json:"purpose"`
@@ -270,6 +274,12 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		m.escrow = m.workspace.Escrow
 	case "task.status":
 		m.workspace.Post.Status = data.Status
+		if data.Status == "in_progress" {
+			m.workspace.Post.Deadline = api.TaskDeadline{Stage: "deliver", DueAt: m.workspace.Post.DeliverBy}
+		} else if data.Status == "completed" || data.Status == "cancelled" {
+			m.workspace.Post.Deadline = api.TaskDeadline{}
+		}
+
 		for i := range m.posts {
 			if m.posts[i].ID == event.PostID {
 				m.posts[i].Status = data.Status
@@ -279,11 +289,22 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		m.workspace.State.Submission, m.workspace.State.SubmittedAt = data.Note, data.SubmittedAt
 		m.workspace.State.SubmissionVersion, m.workspace.State.ReviewState, m.workspace.State.ReviewNote = data.SubmissionVersion, "submitted", ""
 		m.workspace.State.DeliveryFiles = data.DeliveryFiles
+		m.workspace.State.ReviewBy = data.ReviewBy
+		m.workspace.Post.Deadline = api.TaskDeadline{Stage: "review", DueAt: data.ReviewBy}
 	case "review.changes_requested":
 		m.workspace.State.ReviewState, m.workspace.State.ReviewNote = "changes_requested", data.Note
+		m.workspace.State.ReviewBy = nil
+		m.workspace.Post.Deadline = api.TaskDeadline{Stage: "deliver", DueAt: m.workspace.Post.DeliverBy}
 	case "review.completed":
 		m.workspace.State.ReviewState = data.ReviewState
+		m.workspace.State.ReviewBy = nil
+		m.workspace.Post.Deadline = api.TaskDeadline{}
 		m.reviewConfirm = false
+	case "task.overdue":
+		if data.Stage != "review" || data.SubmissionVersion == m.workspace.State.SubmissionVersion {
+			m.workspace.Post.Deadline = api.TaskDeadline{Stage: data.Stage, DueAt: data.DueAt,
+				Overdue: true, RecoveryAction: data.RecoveryAction}
+		}
 	case "settlement.updated":
 		m.workspace.Settlement.State, m.workspace.Settlement.Note, m.workspace.Settlement.Signature = data.State, data.Note, data.Signature
 
@@ -632,10 +653,19 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 		Note   string `json:"note"`
 		State  string `json:"state"`
 		Status string `json:"status"`
+		Stage  string `json:"stage"`
 	}
 
 	_ = json.Unmarshal(event.Data, &data)
 	switch event.Kind {
+	case "task.overdue":
+		if data.Stage == "fund" {
+			return "Funding deadline passed. The requester can cancel/reopen once active funding expires."
+		}
+
+		label := map[string]string{"fund": "Funding", "deliver": "Delivery", "review": "Review"}[data.Stage]
+
+		return label + " deadline passed. Payment/refund still needs the reviewer."
 	case "message":
 		return actor + ": " + plain(data.Text)
 	case "file.shared":

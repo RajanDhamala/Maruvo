@@ -48,7 +48,9 @@ func (m model) detailLayout() postLayout {
 	_, height := m.dimensions()
 
 	l := postLayout{rows: m.detailRows(), footer: "↑↓ / wheel scroll   Esc back   n new   q quit"}
-	if m.fundingConfirm {
+	if m.recovering != "" {
+		l = m.recoveryLayout()
+	} else if m.fundingConfirm {
 		l.rows = []string{bold("Fund this task's escrow?"), muted(plain(post.Title)), "",
 			fmt.Sprintf("Payment       %d lamports", post.CostLamports),
 			fmt.Sprintf("Network fee   %d lamports", m.escrow.FeeLamports),
@@ -56,6 +58,34 @@ func (m model) detailLayout() postLayout {
 			"Network       " + m.escrow.Network,
 			"Reviewer      " + ansi.Truncate(m.escrow.Reviewer, max(1, m.contentWidth()-14), "…"),
 			muted("Funds stay in escrow until the reviewer settles."), ""}
+		if post.DeliverBy != nil {
+			l.rows = append(l.rows[:len(l.rows)-1], taskTimingRows(post)...)
+		}
+
+		if m.bodyHeight() < len(l.rows)+1 {
+			l.rows = []string{
+				bold("Sign funding?"),
+				fmt.Sprintf(
+					"Pay %d · Fee %d · Storage %d",
+					post.CostLamports,
+					m.escrow.FeeLamports,
+					m.escrow.StorageLamports,
+				),
+				m.escrow.Network + " · Reviewer " + shortWallet(m.escrow.Reviewer),
+			}
+			if post.DeliverBy != nil && post.FundBy != nil {
+				l.rows = append(
+					l.rows,
+					"Fund by "+post.FundBy.Local().Format("02 Jan, 15:04"),
+					"Deliver "+post.DeliverBy.Local().
+						Format("02 Jan, 15:04")+
+						" · Review "+timingHours(
+						post.ReviewWindowSeconds,
+					),
+				)
+			}
+		}
+
 		l.buttons([]string{"Sign & fund", "Cancel"}, []string{"fund-confirm", "cancel"})
 		l.footer = "Enter / y approve funding   Esc cancel"
 	} else if m.deleting {
@@ -120,11 +150,16 @@ func (m model) detailHeader() postLayout {
 	post := m.posts[m.selected]
 	width := m.contentWidth()
 
+	status := strings.ReplaceAll(post.Status, "_", " ")
+	if post.Deadline.DueAt != nil && !time.Now().Before(*post.Deadline.DueAt) && activeTask(post) {
+		status = deadlineLabel(post.Deadline)
+	}
+
 	l := postLayout{
 		rows: []string{
 			align(bold(plain(post.Title)), muted(fmt.Sprintf("#%d", post.ID)), width),
 			align(
-				muted(strings.ReplaceAll(post.Status, "_", " ")+" · "+post.Level),
+				muted(status+" · "+post.Level),
 				bold(taskBudget(post.CostLamports)),
 				width,
 			),
@@ -138,12 +173,25 @@ func (m model) detailHeader() postLayout {
 		l.wrappedButtons(width, []string{"Accept task", "Back"}, []string{"a", "back"})
 		l.footer = "a accept · w wallet · r refresh · ↑↓ scroll · Esc back"
 	} else if m.isPoster(post) && post.AcceptedBy != nil && post.Status == "negotiating" {
+		labels, actions := []string{"Fund escrow", "Chat", "Send file"}, []string{"f", "c", "u"}
+		if m.canRecover(post) {
+			labels, actions = append(labels, "Cancel task", "Reopen as new"), append(actions, "x", "o")
+		}
+
 		l.wrappedButtons(
 			width,
-			[]string{"Fund escrow", "Chat", "Send file", "Back"},
-			[]string{"f", "c", "u", "back"},
+			append(labels, "Back"),
+			append(actions, "back"),
 		)
-		l.footer = "f fund · c chat · u file · r refresh · ↑↓ scroll · Esc back"
+		l.footer = "f fund · x cancel · o reopen · c chat · r refresh · Esc back"
+	} else if m.canRecover(post) && post.Status == "cancelled" {
+		label := "Reopen as new"
+		if post.ReopenedAs != nil {
+			label = "View reopened task"
+		}
+
+		l.wrappedButtons(width, []string{label, "Chat", "Back"}, []string{"o", "c", "back"})
+		l.footer = "o reopen · c history · r refresh · Esc back"
 	} else if post.AcceptedBy != nil {
 		l.wrappedButtons(
 			width,
@@ -177,8 +225,16 @@ func (m model) detailRows() []string {
 		"Accept by  " + post.EndTime.Local().Format("02 Jan 2006, 15:04 MST"),
 		fmt.Sprintf("Budget     %d lamports", post.CostLamports),
 	}
+	for _, row := range taskTimingRows(post) {
+		rows = append(rows, strings.Split(ansi.Wrap(row, width, " "), "\n")...)
+	}
+
 	if post.Poster != nil && post.Poster.GitHubURL != "" {
 		rows = append(rows, "GitHub     "+post.Poster.GitHubURL)
+	}
+
+	if post.ReopenedAs != nil {
+		rows = append(rows, fmt.Sprintf("Reopened   #%d", *post.ReopenedAs))
 	}
 
 	if post.AcceptedBy != nil {

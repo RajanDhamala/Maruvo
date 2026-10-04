@@ -22,47 +22,157 @@ func (a *arguments) Set(value string) error { *a = append(*a, value); return nil
 
 func Run(ctx context.Context, client *api.Client, profile string, args []string, out, log io.Writer) error {
 	if len(args) == 0 {
-		return errors.New(
-			"agent commands: tools, login, link-github, feed, tasks, create, task, accept, chat, message, files, send-file, upload, download, submit, events, run",
+		return InvalidArgument(
+			"agent commands: tools, login, link-github, identity, grant, grants, revoke, feed, tasks, create, task, accept, cancel, reopen, chat, message, files, send-file, upload, download, submit, request-changes, events, history, wait, run",
 		)
 	}
 
 	action := args[0]
+	switch action {
+	case "tools",
+		"login",
+		"link-github",
+		"identity",
+		"grant",
+		"grants",
+		"revoke",
+		"feed",
+		"tasks",
+		"create",
+		"task",
+		"accept",
+		"cancel",
+		"reopen",
+		"chat",
+		"message",
+		"files",
+		"send-file",
+		"upload",
+		"download",
+		"submit",
+		"request-changes",
+		"events",
+		"history",
+		"wait",
+		"run":
+	default:
+		return InvalidArgument("unknown agent command: " + action)
+	}
+
 	flags := flag.NewFlagSet("agent "+action, flag.ContinueOnError)
-	flags.SetOutput(log)
+	flags.SetOutput(io.Discard)
 	postID := flags.Int64("post", 0, "task ID")
 	level := flags.String("level", "easy", "feed difficulty")
 	provider := flags.String("provider", "github", "login provider: github or google")
 	brief := flags.String("brief", "", "task JSON file")
+	endTime := flags.String("end-time", "", "future RFC3339 acceptance cutoff for reopening a task")
+	deliverBy := flags.String("deliver-by", "", "replacement RFC3339 delivery deadline when reopening")
 	file := flags.String("file", "", "local file to upload")
 	purpose := flags.String("purpose", "shared", "input, output, or shared")
 	fileID := flags.String("id", "", "shared file ID")
+	grantID := flags.String("grant-id", "", "agent grant ID to revoke")
+	agentName := flags.String("name", "", "name identifying this harness")
+	lifetime := flags.Duration("expires-in", time.Hour, "agent credential lifetime (1 minute to 7 days)")
+
+	var permissions arguments
+	flags.Var(
+		&permissions,
+		"permission",
+		"agent permission: read, message, upload, submit, request-changes (repeatable)",
+	)
 	destination := flags.String("to", "", "new download path")
 	text := flags.String("text", "", "message or delivery note")
 	messageID := flags.String("message-id", "", "message ID to reuse when retrying the same chat message")
+	version := flags.Int64(
+		"version",
+		-1,
+		"current workspace submission version; required for explicit delivery and revision requests",
+	)
 	after := flags.Int64("after", 0, "last received event ID")
 	cursor := flags.String("cursor", "", "last received Redis stream ID")
+	before := flags.Int64("before", 0, "exclusive archived event ID for history; 0 starts at the newest page")
+	pageLimit := flags.Int("limit", 50, "history page size (1-100)")
+
+	var eventKinds arguments
+	flags.Var(&eventKinds, "event", "event kind to wait for (repeatable); defaults to any workspace event")
 	directory := flags.String("dir", "./maruvo-work", "local task working directory")
 	executable := flags.String("exec", "", "agent harness executable; receives task JSON on stdin")
+
+	defaultTimeout := 30 * time.Minute
+	if action == "wait" {
+		defaultTimeout = 30 * time.Second
+	}
+
 	timeout := flags.Duration(
 		"timeout",
-		30*time.Minute,
-		"runner timeout, including waiting for funding/review",
+		defaultTimeout,
+		"runner or wait timeout; wait accepts up to 5 minutes",
 	)
 	once := flags.Bool("once", false, "exit after submitting one delivery")
 
 	var commandArgs arguments
 	flags.Var(&commandArgs, "arg", "harness argument (repeatable)")
 
+	var deliveryFiles, inputFiles arguments
+	flags.Var(&deliveryFiles, "file-id", "uploaded delivery file ID (repeatable)")
+	flags.Var(
+		&inputFiles,
+		"input-id",
+		"input file ID used for this delivery, in declared filename order (repeatable)",
+	)
+
 	if err := flags.Parse(args[1:]); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			flags.SetOutput(log)
+			flags.PrintDefaults()
+
+			return nil
+		}
+
+		return InvalidArgument(err.Error())
 	}
 
 	if flags.NArg() != 0 {
-		return errors.New("unexpected positional arguments; use --arg for harness arguments")
+		return InvalidArgument("unexpected positional arguments; use --arg for harness arguments")
+	}
+
+	if *version < -1 || ((*version < 0) && (len(deliveryFiles) > 0 || len(inputFiles) > 0)) {
+		return InvalidArgument("provide a nonnegative --version with delivery file or input IDs")
+	}
+
+	if action == "request-changes" && (*version < 1 || strings.TrimSpace(*text) == "") {
+		return InvalidArgument(
+			"provide --version for the submitted delivery and --text explaining the requested changes",
+		)
+	}
+
+	if (action == "submit" || action == "request-changes") && *postID <= 0 {
+		return InvalidArgument("provide a positive --post task ID")
 	}
 
 	encode := json.NewEncoder(out).Encode
+
+	if action == "history" && (*postID <= 0 || *before < 0 || *pageLimit < 1 || *pageLimit > 100) {
+		return InvalidArgument("provide --post, nonnegative --before, and --limit between 1 and 100")
+	}
+
+	if action == "wait" && (*postID <= 0 || *after < 0 || *timeout <= 0 || *timeout > 5*time.Minute) {
+		return InvalidArgument(
+			"provide --post, nonnegative --after, and --timeout greater than zero and at most 5m",
+		)
+	}
+
+	if action == "grant" && (*postID <= 0 || strings.TrimSpace(*agentName) == "" || *destination == "" ||
+		*lifetime < time.Minute || *lifetime > 7*24*time.Hour) {
+		return InvalidArgument(
+			"provide --post, --name, --to for a new credential file, and --expires-in between 1m and 168h",
+		)
+	}
+
+	if action == "revoke" && *grantID == "" {
+		return InvalidArgument("provide --grant-id")
+	}
+
 	if action == "tools" {
 		return encode(toolList())
 	}
@@ -80,13 +190,32 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		return encode(map[string]string{"status": "signed_in", "profile": profile})
 	}
 
-	token, err := auth.LoadSession(client.URL(), profile)
+	token, agentSession, err := auth.LoadAgentSession(client.URL())
 	if err != nil {
 		return err
 	}
 
+	if !agentSession {
+		token, err = auth.LoadSession(client.URL(), profile)
+		if err != nil {
+			return err
+		}
+	}
+
 	if token == "" {
-		return errors.New("sign in first with agent login or the terminal UI using the same profile")
+		return &commandError{
+			Code:    "UNAUTHENTICATED",
+			Message: "sign in first with agent login or the terminal UI using the same profile",
+		}
+	}
+
+	if action == "wait" {
+		result, err := waitForTask(ctx, client, token, *postID, *after, *cursor, eventKinds, *timeout)
+		if err != nil {
+			return err
+		}
+
+		return encode(result)
 	}
 
 	user, err := client.Me(ctx, token)
@@ -108,6 +237,36 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	}
 
 	switch action {
+	case "history":
+		page, err := client.History(ctx, token, *postID, *before, *pageLimit)
+		if err != nil {
+			return err
+		}
+
+		return encode(page)
+	case "identity":
+		return encode(user)
+	case "grant":
+		return grantAccess(ctx, client, token, *postID, *agentName,
+			append([]string{"read"}, permissions...), *lifetime, *destination, out)
+	case "grants":
+		if *postID <= 0 {
+			return InvalidArgument("provide a positive --post task ID")
+		}
+
+		grants, err := client.AgentGrants(ctx, token, *postID)
+		if err != nil {
+			return err
+		}
+
+		return encode(grants)
+	case "revoke":
+		grant, err := client.RevokeAgentGrant(ctx, token, *grantID)
+		if err != nil {
+			return err
+		}
+
+		return encode(grant)
 	case "feed":
 		posts, err := client.Feed(ctx, token, *level)
 		if err != nil {
@@ -124,7 +283,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		return encode(posts)
 	case "create":
 		if *brief == "" {
-			return errors.New("provide --brief with a task JSON file")
+			return InvalidArgument("provide --brief with a task JSON file")
 		}
 
 		input, err := os.Open(*brief)
@@ -134,8 +293,12 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		defer input.Close()
 
 		var payload api.CreatePostPayload
-		if err = json.NewDecoder(io.LimitReader(input, 64<<10)).Decode(&payload); err != nil {
-			return err
+
+		decoder := json.NewDecoder(io.LimitReader(input, 64<<10))
+		decoder.DisallowUnknownFields()
+
+		if err = decoder.Decode(&payload); err != nil {
+			return InvalidArgument("invalid task JSON: " + err.Error())
 		}
 
 		post, err := client.CreatePost(ctx, token, payload)
@@ -147,7 +310,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	}
 
 	if *postID <= 0 {
-		return errors.New("provide a positive --post task ID")
+		return InvalidArgument("provide a positive --post task ID")
 	}
 
 	switch action {
@@ -174,21 +337,48 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		}
 
 		return encode(post)
-	case "message":
-		if err = client.SendMessage(ctx, token, *postID, *text, *messageID); err != nil {
+	case "cancel", "reopen":
+		var deadline time.Time
+		if *endTime != "" {
+			deadline, err = time.Parse(time.RFC3339, *endTime)
+			if err != nil {
+				return InvalidArgument("provide --end-time in RFC3339 format")
+			}
+		}
+
+		var delivery time.Time
+		if *deliverBy != "" {
+			delivery, err = time.Parse(time.RFC3339, *deliverBy)
+			if err != nil {
+				return InvalidArgument("provide --deliver-by in RFC3339 format")
+			}
+		}
+
+		post, err := client.RecoverPost(ctx, token, *postID, action, deadline, delivery)
+		if err != nil {
 			return err
 		}
+
+		return encode(post)
+	case "message":
+		receipt, err := client.SendMessageReceipt(ctx, token, *postID, *text, *messageID)
+		if err != nil {
+			return err
+		}
+
+		return encode(receipt)
 	case "chat":
 		if *after < 0 {
-			return errors.New("event cursor must be nonnegative")
+			return InvalidArgument("event cursor must be nonnegative")
 		}
 
 		if *text != "" {
-			if err = client.SendMessage(ctx, token, *postID, *text, *messageID); err != nil {
+			receipt, err := client.SendMessageReceipt(ctx, token, *postID, *text, *messageID)
+			if err != nil {
 				return err
 			}
 
-			break
+			return encode(receipt)
 		}
 
 		workspace, err := client.Workspace(ctx, token, *postID)
@@ -223,7 +413,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		return encode(workspace.Files)
 	case "upload", "send-file":
 		if *file == "" {
-			return errors.New("provide --file")
+			return InvalidArgument("provide --file")
 		}
 
 		shared, err := client.UploadTaskFile(ctx, token, *postID, *file, *purpose)
@@ -234,7 +424,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		return encode(shared)
 	case "download":
 		if *fileID == "" || *destination == "" {
-			return errors.New("provide --id and --to")
+			return InvalidArgument("provide --id and --to")
 		}
 
 		workspace, err := client.Workspace(ctx, token, *postID)
@@ -254,19 +444,43 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		}
 
 		if !found {
-			return errors.New("file is not in this task workspace")
+			return &commandError{Code: "NOT_FOUND", Message: "file is not in this task workspace"}
 		}
 
 		if err != nil {
 			return err
 		}
 	case "submit":
-		if err = client.SubmitWork(ctx, token, *postID, *text); err != nil {
+		var receipt api.WorkspaceReceipt
+		if *version >= 0 {
+			receipt, err = client.SubmitDeliveryReceipt(
+				ctx,
+				token,
+				*postID,
+				*version,
+				*text,
+				deliveryFiles,
+				inputFiles,
+			)
+		} else {
+			receipt, err = client.SubmitWorkReceipt(ctx, token, *postID, *text)
+		}
+
+		if err != nil {
 			return err
 		}
+
+		return encode(receipt)
+	case "request-changes":
+		receipt, err := client.RequestChangesReceipt(ctx, token, *postID, *version, *text)
+		if err != nil {
+			return err
+		}
+
+		return encode(receipt)
 	case "events":
 		if *after < 0 {
-			return errors.New("event cursor must be nonnegative")
+			return InvalidArgument("event cursor must be nonnegative")
 		}
 
 		return watch(
@@ -280,7 +494,7 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		)
 	case "run":
 		if *executable == "" || *timeout <= 0 {
-			return errors.New("provide --exec and a positive --timeout")
+			return InvalidArgument("provide --exec and a positive --timeout")
 		}
 
 		runCtx, cancel := context.WithTimeout(ctx, *timeout)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -175,6 +176,18 @@ func (m model) reviewLayout(l postLayout) postLayout {
 		body = append(body, muted("The worker has not submitted delivery yet."))
 	} else {
 		body = append(body, muted(state.SubmittedAt.Local().Format("02 Jan 2006, 15:04")))
+		if state.ReviewBy != nil {
+			label := "Review by " + state.ReviewBy.Local().Format("02 Jan, 15:04")
+			if !time.Now().Before(*state.ReviewBy) {
+				label += " · overdue"
+			}
+
+			body = append(body, accent(label))
+		}
+
+		if m.workspace.Post.DeliverBy != nil && state.SubmittedAt.After(*m.workspace.Post.DeliverBy) {
+			body = append(body, muted("Delivered after the agreed deadline."))
+		}
 
 		body = append(body, strings.Split(ansi.Wrap(plain(state.Submission), max(1, width), " "), "\n")...)
 		for _, id := range state.DeliveryFiles {

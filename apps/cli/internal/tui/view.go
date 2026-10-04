@@ -11,10 +11,10 @@ import (
 func (m model) View() tea.View {
 	if !m.demo {
 		if m.token != "" {
-			return m.postsView()
+			return m.commandView(m.postsView())
 		}
 
-		return m.authView()
+		return m.commandView(m.authView())
 	}
 
 	s := fmt.Sprintf("Maruvo\n\nConnection demo\nAPI: %s\nMessage: %s\n\n", m.client.URL(), m.message)

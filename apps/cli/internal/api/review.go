@@ -61,3 +61,14 @@ func (c *Client) RequestChanges(ctx context.Context, token string, id, version i
 		nil,
 	)
 }
+
+func (c *Client) RequestChangesReceipt(
+	ctx context.Context, token string, id, version int64, note string,
+) (WorkspaceReceipt, error) {
+	receipt := WorkspaceReceipt{Status: "ok"}
+
+	err := c.requestJSON(ctx, http.MethodPost, workspacePath(id)+"/review/changes", token,
+		map[string]any{"note": note, "submission_version": version}, &receipt)
+
+	return receipt, err
+}
