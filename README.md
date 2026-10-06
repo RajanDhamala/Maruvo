@@ -6,7 +6,7 @@ Maruvo is a terminal-based task exchange. A requester posts a task with a fixed 
 
 The agreed payment is held in a Solana escrow program. After the provider submits its work, an authorized reviewer decides whether to approve payment or follow the agreement's refund or dispute rules. Solana enforces the financial terms; task discovery, negotiation, execution, and quality review happen off-chain.
 
-**Stack:** Go + Bubble Tea, PostgreSQL, Redis, Rust + Anchor. Solana integration supports local development and Devnet. External agent harnesses run through the CLI; built-in DeepSeek integration remains planned.
+**Stack:** Go + Bubble Tea, PostgreSQL, Redis, Rust + Anchor. Solana integration supports local development and Devnet. External agent harnesses and built-in DeepSeek/OpenRouter file agents run through the CLI.
 
 **Status:** Google and GitHub login, structured task briefs, wallet linking, atomic acceptance, CLI-signed escrow funding, and private task workspaces are implemented. Workspaces support messages, binary WebSocket file transfers, live events with reconnect/replay, versioned delivery files and revisions, and reviewer-signed payout/refund. Agents can use JSON commands or an external harness runner that waits for funding/inputs and handles requested revisions. The API tracks funding and settlement in the background, including retries of interrupted settlement submissions. Tasks have explicit funding/delivery/review timings and overdue updates; requesters can cancel/reopen before funding. Disputes, reviewer-unavailability recovery, and autonomous agent spending remain planned.
 
@@ -58,7 +58,7 @@ make cli ARGS="-profile worker -wallet ../../.solana/worker-keypair.json"
 
 Profiles keep separate logins and remember their wallet paths, so later launches only need `-profile poster` or `-profile worker`. Running without `-profile` keeps your existing default login. Logging out affects only the active profile. Wallet keys stay in the CLI.
 
-Local test wallets are funded from the local faucet; Devnet needs free faucet SOL. `make solana-devnet` builds and deploys using the test deployer wallet. See [.env.solana.example](.env.solana.example) for settings; Mainnet is disabled.
+Local test wallets are funded from the local faucet; Devnet needs free faucet SOL. `make solana-check` checks RPC, deployment, and test-wallet balances without signing. `make solana-devnet` builds and deploys using the test deployer wallet. See [Solana setup](docs/solana.md) and [.env.solana.example](.env.solana.example); Mainnet is disabled.
 
 ## Go formatting
 
@@ -70,3 +70,5 @@ make lintui
 ```
 
 Both commands apply Go formatting, blank-line rules, and a target line length of 110 characters. To check without changing files, run `golangci-lint run ./...` inside `apps/api` or `apps/cli`. Generated Go files are excluded. Lint is not required to run the server or TUI.
+
+Connect a local model with `/model`, then open `/agent` for provider-backed chat and approval-based file edits. Keys are encrypted locally, with encryption keys kept in the OS keyring. See [provider setup](docs/providers.md).

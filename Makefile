@@ -1,4 +1,4 @@
-.PHONY: proto api rust cli build build-api build-cli build-rust test migrate-down migrate-up sqlc tui lintapi lintui solana-local solana-build solana-devnet local
+.PHONY: proto api rust cli build build-api build-cli build-rust test migrate-down migrate-up sqlc tui lintapi lintui solana-local solana-build solana-check solana-devnet local
 
 proto:
 	protoc -I proto \
@@ -50,6 +50,9 @@ local:
 
 solana-devnet:
 	./scripts/solana-devnet.sh
+
+solana-check:
+	./scripts/solana-check.sh
 
 build: build-api build-cli build-rust
 

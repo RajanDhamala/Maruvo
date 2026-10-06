@@ -13,6 +13,10 @@ import (
 
 func (w *Wallet) SignSettlement(post api.Post, plan api.SettlementPlan) (string, error) {
 	escrow, settlement := plan.Escrow, plan.Settlement
+	if err := validateSigningConfig(escrow.Network, escrow.ProgramID); err != nil {
+		return "", err
+	}
+
 	if post.AcceptedBy == nil || escrow.ProgramID != ProgramID || escrow.State != "confirmed" ||
 		(escrow.Network != "devnet" && escrow.Network != "localnet") || settlement.State != "prepared" ||
 		(settlement.Action != "release" && settlement.Action != "refund") || w.Address() != escrow.Reviewer || os.Getenv("SOLANA_REVIEWER") != escrow.Reviewer {

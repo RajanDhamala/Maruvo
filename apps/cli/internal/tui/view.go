@@ -9,6 +9,14 @@ import (
 )
 
 func (m model) View() tea.View {
+	if m.providers.open {
+		return m.providersView()
+	}
+
+	if m.localAgent.open {
+		return m.localAgentView()
+	}
+
 	if !m.demo {
 		if m.token != "" {
 			return m.commandView(m.postsView())

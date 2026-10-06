@@ -39,6 +39,8 @@ type model struct {
 	homePath               string
 	directory              string
 	commands               commandMenu
+	providers              providerSettings
+	localAgent             localAgentState
 	dashboard              dashboardState
 	profileOpen            bool
 	walletAddress          string

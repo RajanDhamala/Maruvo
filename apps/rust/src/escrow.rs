@@ -86,7 +86,8 @@ impl EscrowClient {
 
     async fn verify_network(&self) -> Result<(), Status> {
         let genesis = self.rpc("getGenesisHash", json!([])).await?;
-        if self.network == "devnet" && genesis.as_str() != Some("EtWTRABZaYq6iMfeYKouRu166VU2xqa1")
+        if self.network == "devnet"
+            && genesis.as_str() != Some("EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG")
         {
             return Err(Status::failed_precondition("RPC is not Solana Devnet"));
         }
@@ -204,6 +205,16 @@ impl EscrowClient {
             return Err(Status::invalid_argument("wrong escrow program"));
         }
         self.verify_network().await?;
+        let signature = transaction.signatures[0].to_string();
+        let statuses = self
+            .rpc(
+                "getSignatureStatuses",
+                json!([[signature], {"searchTransactionHistory":true}]),
+            )
+            .await?;
+        if signature_status(&statuses)?.is_some() {
+            return Ok(signature);
+        }
         let signature = self.rpc("sendTransaction", json!([signed, {"encoding":"base64", "skipPreflight":false, "preflightCommitment":"confirmed", "maxRetries":3}])).await?;
         if signature.as_str() != Some(&transaction.signatures[0].to_string()) {
             return Err(Status::unavailable("unexpected transaction signature"));
@@ -265,6 +276,9 @@ impl EscrowClient {
         let account = self
             .rpc("getAccountInfo", json!([request.address, config]))
             .await?;
+        if account.get("value").is_none() {
+            return Err(Status::unavailable("missing escrow account snapshot"));
+        }
         if recovery {
             let slot = account["context"]["slot"]
                 .as_u64()
@@ -327,14 +341,27 @@ impl EscrowClient {
                     json!([[request.signature], {"searchTransactionHistory":true}]),
                 )
                 .await?;
-            if !status["value"][0].is_null() && !status["value"][0]["err"].is_null() {
-                return Ok("failed".into());
+            if let Some(status) = signature_status(&status)? {
+                let confirmed = matches!(
+                    status["confirmationStatus"].as_str(),
+                    Some("confirmed" | "finalized")
+                );
+                return Ok(if confirmed && !status["err"].is_null() {
+                    "failed"
+                } else {
+                    "pending"
+                }
+                .into());
             }
         }
         let height = self
             .rpc("getBlockHeight", json!([{"commitment":"confirmed"}]))
             .await?;
-        if height.as_u64().unwrap_or(0) > request.last_valid_block_height {
+        if height
+            .as_u64()
+            .ok_or_else(|| Status::unavailable("missing block height"))?
+            > request.last_valid_block_height
+        {
             return Ok("expired".into());
         }
         Ok(if request.signature.is_empty() {
@@ -440,8 +467,7 @@ impl EscrowClient {
                     json!([[request.signature], {"searchTransactionHistory":true}]),
                 )
                 .await?;
-            let status = &statuses["value"][0];
-            if !status.is_null() {
+            if let Some(status) = signature_status(&statuses)? {
                 let confirmed = matches!(
                     status["confirmationStatus"].as_str(),
                     Some("confirmed" | "finalized")
@@ -476,6 +502,26 @@ impl EscrowClient {
             escrow_state,
         })
     }
+}
+
+fn signature_status(response: &Value) -> Result<Option<&Value>, Status> {
+    let statuses = response["value"]
+        .as_array()
+        .filter(|values| values.len() == 1)
+        .ok_or_else(|| Status::unavailable("invalid transaction status response"))?;
+    let status = &statuses[0];
+    if status.is_null() {
+        return Ok(None);
+    }
+    if status.get("err").is_none()
+        || !matches!(
+            status["confirmationStatus"].as_str(),
+            Some("processed" | "confirmed" | "finalized")
+        )
+    {
+        return Err(Status::unavailable("invalid transaction status"));
+    }
+    Ok(Some(status))
 }
 
 fn key(value: &str) -> Result<Pubkey, Status> {

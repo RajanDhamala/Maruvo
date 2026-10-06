@@ -15,7 +15,8 @@ var slashCommands = []struct {
 	name, label string
 }{
 	{"/open", "Open directory"},
-	{"/model", "Model · coming soon"},
+	{"/model", "Connect provider / choose model"},
+	{"/agent", "Open local CLI agent"},
 	{"/priority", "Priority · coming soon"},
 	{"/new", "New task · coming soon"},
 }
@@ -88,6 +89,14 @@ func (m model) commandIndices() []int {
 }
 
 func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
+	if slashCommands[index].name == "/model" {
+		return m.openProviders()
+	}
+
+	if slashCommands[index].name == "/agent" {
+		return m.openLocalAgent()
+	}
+
 	if index != 0 {
 		m.commands.err = errors.New("This command is coming soon.")
 		return m, nil

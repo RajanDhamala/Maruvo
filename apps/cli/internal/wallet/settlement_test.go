@@ -108,6 +108,8 @@ func settlementFixture(t *testing.T, action, reviewerRole string) (*Wallet, api.
 		},
 	}
 	t.Setenv("SOLANA_REVIEWER", reviewer.Address())
+	t.Setenv("SOLANA_RPC_URL", "http://127.0.0.1:8899")
+	t.Setenv("SOLANA_PROGRAM_ID", ProgramID)
 
 	return reviewer, post, plan
 }
