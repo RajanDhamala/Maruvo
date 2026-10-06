@@ -59,3 +59,26 @@ func LoadConfig() error {
 		directory = parent
 	}
 }
+
+func validateSigningConfig(network, programID string) error {
+	var configuredNetwork string
+
+	switch strings.TrimRight(os.Getenv("SOLANA_RPC_URL"), "/") {
+	case "https://api.devnet.solana.com":
+		configuredNetwork = "devnet"
+	case "http://127.0.0.1:8899", "http://localhost:8899":
+		configuredNetwork = "localnet"
+	default:
+		return errors.New("SOLANA_RPC_URL must be the public Devnet endpoint or localhost:8899")
+	}
+
+	if network != configuredNetwork {
+		return errors.New("transaction network does not match your local Solana configuration")
+	}
+
+	if programID != ProgramID || os.Getenv("SOLANA_PROGRAM_ID") != ProgramID {
+		return errors.New("escrow program does not match your local Solana configuration")
+	}
+
+	return nil
+}

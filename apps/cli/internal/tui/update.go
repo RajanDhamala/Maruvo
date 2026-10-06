@@ -3,6 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
+	"github.com/rajandhamala/Maruvo/cli/internal/providers"
 )
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -12,10 +13,58 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.MouseClickMsg:
+		if m.providers.open {
+			return m.updateProviderMouse(msg)
+		}
+
+		if m.localAgent.open {
+			return m, nil
+		}
+
 		return m.updateMouse(msg)
 	case tea.MouseWheelMsg:
+		if m.providers.open {
+			area := m.providerArea()
+			if msg.X < area.x || msg.X >= area.x+area.width || msg.Y < area.y || msg.Y >= area.y+area.height {
+				return m, nil
+			}
+
+			if msg.Button == tea.MouseWheelUp {
+				return m.updateProviders(tea.KeyPressMsg{Code: tea.KeyUp})
+			}
+
+			if msg.Button == tea.MouseWheelDown {
+				return m.updateProviders(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+
+			return m, nil
+		}
+
+		if m.localAgent.open {
+			return m, nil
+		}
+
 		return m.updateWheel(msg)
 	case tea.PasteMsg:
+		if m.providers.open {
+			if !m.providers.busy && m.providers.step == providerKey {
+				m.providers.key.insert(msg.Content)
+			} else if !m.providers.busy {
+				m.providers.query.insert(msg.Content)
+				m.providers.selection = 0
+			}
+
+			return m, nil
+		}
+
+		if m.localAgent.open {
+			if !m.localAgent.busy {
+				m.localAgent.input.insert(msg.Content)
+			}
+
+			return m, nil
+		}
+
 		if m.commands.open {
 			m.commands.query.insert(msg.Content)
 			return m.updateCommandQuery()
@@ -62,8 +111,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			if m.localAgent.cancel != nil {
+				m.localAgent.cancel()
+			}
+
+			if m.providers.cancel != nil {
+				m.providers.cancel()
+			}
+
 			m.stopWorkspace()
+
 			return m, tea.Quit
+		}
+
+		if m.providers.open {
+			return m.updateProviders(msg)
+		}
+
+		if m.localAgent.open {
+			return m.updateLocalAgent(msg)
 		}
 
 		if m.commands.open {
@@ -114,6 +180,86 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commands.open && m.commands.directory && msg.sequence == m.commands.sequence {
 			m.commands.folders, m.commands.err, m.commands.searching = msg.folders, msg.err, false
 		}
+	case providerConfigLoaded:
+		if m.providers.open && msg.sequence == m.providers.sequence {
+			m.providers.busy, m.providers.config, m.providers.err = false, msg.config, msg.err
+			for i, name := range providers.Names {
+				if name == msg.config.Active {
+					m.providers.provider, m.providers.selection = i, i
+				}
+			}
+		}
+	case providerModelsLoaded:
+		if m.providers.open && msg.sequence == m.providers.sequence {
+			m.providers.busy, m.providers.err = false, msg.err
+
+			m.providers.key = textField{limit: 4096}
+
+			m.providers.models, m.providers.secret = nil, ""
+			if msg.err == nil {
+				m.providers.models, m.providers.secret = msg.models, msg.secret
+				m.providers.step, m.providers.selection = providerModel, 0
+				m.providers.query = textField{limit: 200}
+
+				name := providers.Names[m.providers.provider]
+				for i, item := range msg.models {
+					if item.ID == m.providers.config.Connections[name].Model {
+						m.providers.selection = i
+					}
+				}
+			}
+		}
+	case providerSaved:
+		if m.providers.open && msg.sequence == m.providers.sequence {
+			m.providers.busy, m.providers.saving, m.providers.err = false, false, msg.err
+
+			m.providers.secret, m.providers.models = "", nil
+			if msg.err != nil && !msg.removed {
+				m.providers.step = providerKey
+			}
+
+			if msg.err == nil {
+				m.providers = providerSettings{sequence: m.providers.sequence + 1}
+
+				m.notice = "Provider connected. Open /agent to use the CLI agent."
+				if msg.removed {
+					m.notice = "Provider disconnected; its saved credential was removed."
+				}
+			}
+		}
+	case localAgentReady:
+		if m.localAgent.open && msg.sequence == m.localAgent.sequence {
+			m.localAgent.busy, m.localAgent.client, m.localAgent.label, m.localAgent.err = false, msg.client, msg.label, msg.err
+		}
+	case localAgentUpdate:
+		if !m.localAgent.open || msg.sequence != m.localAgent.sequence {
+			return m, nil
+		}
+
+		if msg.done {
+			m.localAgent.busy, m.localAgent.err = false, msg.err
+
+			m.localAgent.approval, m.localAgent.answer = nil, nil
+			if msg.err == nil {
+				m.localAgent.history = msg.history
+			}
+
+			if m.localAgent.cancel != nil {
+				m.localAgent.cancel()
+			}
+
+			return m, nil
+		}
+
+		if msg.approval != nil {
+			m.localAgent.approval, m.localAgent.answer, m.localAgent.scroll = msg.approval, msg.answer, 0
+		} else if msg.event.Type == "assistant" {
+			m.localAgent.lines = append(m.localAgent.lines, "Agent: "+msg.event.Text, "")
+		} else {
+			m.localAgent.lines = append(m.localAgent.lines, "Tool: "+msg.event.Text)
+		}
+
+		return m, m.waitLocalAgent()
 	case directoryOpened:
 		if !m.commands.open || !m.commands.directory || msg.sequence != m.commands.sequence {
 			return m, nil

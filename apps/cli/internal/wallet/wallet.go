@@ -82,6 +82,10 @@ func (w *Wallet) SignMessage(message string) string {
 }
 
 func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
+	if err := validateSigningConfig(plan.Network, plan.ProgramID); err != nil {
+		return "", err
+	}
+
 	if post.AcceptedBy == nil || post.CostLamports < 0 || plan.ProgramID != ProgramID ||
 		(plan.Network != "devnet" && plan.Network != "localnet") ||
 		plan.State != "prepared" ||

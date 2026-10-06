@@ -17,6 +17,7 @@ import (
 	"github.com/rajandhamala/Maruvo/cli/internal/agent"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
 	"github.com/rajandhamala/Maruvo/cli/internal/auth"
+	"github.com/rajandhamala/Maruvo/cli/internal/providers"
 	"github.com/rajandhamala/Maruvo/cli/internal/tui"
 	walletconfig "github.com/rajandhamala/Maruvo/cli/internal/wallet"
 )
@@ -34,8 +35,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := walletconfig.LoadConfig(); err != nil {
-		fail(fmt.Errorf("load local Solana configuration: %w", err))
+	command := commandInvocation(os.Args[1:])
+	if command != "provider" && command != "chat" {
+		if err := walletconfig.LoadConfig(); err != nil {
+			fail(fmt.Errorf("load local Solana configuration: %w", err))
+		}
 	}
 
 	defaultURL := os.Getenv("API_URL")
@@ -71,6 +75,29 @@ func main() {
 	}
 
 	args := flags.Args()
+	if len(args) > 0 && (args[0] == "provider" || args[0] == "chat") {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
+		if err := auth.ValidateProfile(*profile); err != nil {
+			fail(err)
+		}
+
+		var err error
+
+		if args[0] == "provider" {
+			err = providers.Commands(ctx, *profile, args[1:], os.Stdin, os.Stdout, os.Stderr)
+		} else {
+			err = providers.ChatCommand(ctx, *profile, args[1:], os.Stdin, os.Stdout, os.Stderr)
+		}
+
+		if err != nil {
+			fail(err)
+		}
+
+		return
+	}
+
 	listTools := len(args) > 1 && args[0] == "agent" && args[1] == "tools"
 	*apiURL = strings.TrimRight(*apiURL, "/")
 
@@ -122,7 +149,10 @@ func main() {
 
 	if len(args) > 0 {
 		if args[0] != "agent" {
-			fmt.Fprintln(os.Stderr, "unknown command; use agent or run without a command for the terminal UI")
+			fmt.Fprintln(
+				os.Stderr,
+				"unknown command; use agent, provider, chat, or run without a command for the terminal UI",
+			)
 			os.Exit(1)
 		}
 
@@ -140,14 +170,22 @@ func main() {
 }
 
 func agentInvocation(args []string) bool {
+	return commandInvocation(args) == "agent"
+}
+
+func commandInvocation(args []string) string {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
-			return i+1 < len(args) && args[i+1] == "agent"
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+
+			return ""
 		}
 
 		if !strings.HasPrefix(arg, "-") {
-			return arg == "agent"
+			return arg
 		}
 
 		name, _, assigned := strings.Cut(strings.TrimLeft(arg, "-"), "=")
@@ -156,7 +194,7 @@ func agentInvocation(args []string) bool {
 		}
 	}
 
-	return false
+	return ""
 }
 
 func run(apiURL, message string, check, demo bool, profile string) error {

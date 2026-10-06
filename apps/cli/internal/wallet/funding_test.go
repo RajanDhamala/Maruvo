@@ -97,6 +97,8 @@ func fundingFixture(t *testing.T, version int32) (*Wallet, api.Post, api.Escrow)
 		Transaction: base64.StdEncoding.EncodeToString(raw),
 	}
 	t.Setenv("SOLANA_REVIEWER", reviewer.Address())
+	t.Setenv("SOLANA_RPC_URL", "http://127.0.0.1:8899")
+	t.Setenv("SOLANA_PROGRAM_ID", ProgramID)
 
 	return poster, post, plan
 }
