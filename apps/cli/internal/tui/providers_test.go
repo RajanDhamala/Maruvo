@@ -3,12 +3,14 @@ package tui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rajandhamala/Maruvo/cli/internal/providers"
+	"github.com/zalando/go-keyring"
 )
 
 func TestProviderPickerMasksKeysAndPreservesTaskDraft(t *testing.T) {
@@ -104,6 +106,136 @@ func TestLocalAgentApprovalAndCancellation(t *testing.T) {
 	}
 }
 
+func TestDashboardAgentPromptLoading(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	m := dashboardFixture()
+	m.homeInput = textField{value: "hello are u here?", cursor: 17, limit: 2000}
+	m.dashboard.focus = dashboardPrompt
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	next, followup := next.Update(cmd())
+
+	m = next.(model)
+	if followup != nil || m.localAgent.busy || m.localAgent.err == nil ||
+		!strings.Contains(m.localAgent.err.Error(), "/model") || m.homeInput.value != "hello are u here?" {
+		t.Fatal("missing provider must explain how to connect and preserve the prompt")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	m.ctx, m.directory = ctx, t.TempDir()
+
+	client, err := providers.NewClient("deepseek", "test-model", "fake-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sequence := m.localAgent.sequence
+
+	next, cmd = m.Update(localAgentReady{sequence: sequence - 1, client: client})
+	if cmd != nil || next.(model).localAgent.client != nil {
+		t.Fatal("stale provider results must not submit a prompt")
+	}
+
+	next, cmd = m.Update(localAgentReady{sequence: sequence, client: client})
+
+	m = next.(model)
+	defer m.localAgent.cancel()
+
+	if cmd == nil || !m.localAgent.busy || m.localAgent.autoSend || m.homeInput.value != "" ||
+		!slices.Contains(m.localAgent.lines, "You: hello are u here?") || m.screen == newPostScreen {
+		t.Fatal("ready provider must automatically submit the prompt once without opening creation")
+	}
+
+	next, cmd = m.Update(localAgentReady{sequence: sequence, client: client})
+	if cmd != nil || len(next.(model).localAgent.lines) != len(m.localAgent.lines) {
+		t.Fatal("duplicate readiness must not resend the prompt")
+	}
+}
+
+func TestLocalAgentRefreshesMutatedPosts(t *testing.T) {
+	for _, exit := range []bool{false, true} {
+		m := dashboardFixture()
+		m.localAgent = localAgentState{open: true, busy: true, sequence: 3, ctx: t.Context()}
+		next, _ := m.Update(localAgentUpdate{sequence: 3, event: providers.Event{
+			Type:   "tool",
+			ToolID: "create",
+			Status: "succeeded",
+			Text:   "✓ Create post · Fix login\n  post #70",
+		}})
+
+		m = next.(model)
+		if !m.localAgent.postsChanged {
+			t.Fatal("successful post mutation must mark the dashboard for refresh")
+		}
+
+		var cmd tea.Cmd
+		if exit {
+			next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		} else {
+			next, cmd = m.Update(localAgentUpdate{sequence: 3, done: true})
+		}
+
+		m = next.(model)
+		if cmd == nil || !m.loading || m.dashboard.generation != 4 || m.localAgent.postsChanged {
+			t.Fatal("completed or interrupted post mutations must refresh the dashboard")
+		}
+	}
+}
+
+func TestDashboardEmptyPromptAndExplicitCreation(t *testing.T) {
+	for _, text := range []string{"", "   "} {
+		m := dashboardFixture()
+		m.homeInput = textField{value: text}
+		m.dashboard.focus = dashboardPrompt
+
+		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if cmd != nil || next.(model).localAgent.open || !next.(model).onDashboard() {
+			t.Fatal("empty prompts must not start the agent or open creation")
+		}
+	}
+
+	m := dashboardFixture()
+	m.homeInput = textField{value: "Explicit task draft", cursor: 19, limit: 2000}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+
+	m = next.(model)
+	if cmd != nil || m.localAgent.open || m.screen != newPostScreen ||
+		m.form.fields[3].value != "Explicit task draft" {
+		t.Fatal("explicit new-task actions must retain manual creation")
+	}
+}
+
+func TestLocalAgentReportedUsageIsVisible(t *testing.T) {
+	m := dashboardFixture()
+	m.localAgent = localAgentState{open: true, sequence: 3, ctx: context.Background()}
+	next, _ := m.Update(localAgentUpdate{sequence: 3, event: providers.Event{
+		Type: "usage", Text: "Usage (API): input 123 · output 45 · cache hit 100",
+	}})
+
+	m = next.(model)
+	for _, size := range [][2]int{{48, 16}, {80, 24}, {120, 36}} {
+		m.width, m.height = size[0], size[1]
+
+		view := ansi.Strip(m.View().Content)
+
+		text := strings.Join(strings.Fields(view), " ")
+		if !strings.Contains(text, "Usage (API): input 123") || !strings.Contains(text, "output 45") ||
+			(size[1] >= 22 && !strings.Contains(text, "cache hit 100")) ||
+			(size[1] < 22 && !strings.Contains(text, "…")) ||
+			strings.Contains(view, "Tool: Usage") {
+			t.Fatalf("reported usage must be visible as usage at %dx%d", size[0], size[1])
+		}
+
+		for _, line := range strings.Split(view, "\n") {
+			if ansi.StringWidth(line) > size[0] {
+				t.Fatal("usage overflowed the terminal")
+			}
+		}
+	}
+}
+
 func TestProviderPickerStagesSearchAndModelSelection(t *testing.T) {
 	m := dashboardFixture()
 	m.homeInput = textField{value: "Keep the task draft", limit: 2000}
@@ -187,11 +319,17 @@ func TestProviderDialogsFitAndKeepBackgroundVisible(t *testing.T) {
 				key:    textField{value: "private-key", cursor: 11, limit: 4096},
 				query:  textField{limit: 200},
 				models: []providers.Model{{ID: "test-model"}},
+				chosen: providers.Model{
+					ID:        "test-model",
+					Reasoning: &providers.ReasoningSupport{SupportsMaxTokens: true},
+				},
 				config: providers.Config{Connections: map[string]providers.Connection{
 					"deepseek": {Model: "old-model", Storage: "file"},
 				}},
 			}
-			for _, step := range []int{providerChoose, providerKey, providerModel} {
+
+			m.providers.provider = 1
+			for _, step := range []int{providerChoose, providerKey, providerModel, providerOptions} {
 				m.providers.step = step
 
 				area := m.providerArea()
@@ -215,6 +353,108 @@ func TestProviderDialogsFitAndKeepBackgroundVisible(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestProviderSettingsSaveEncryptedAndPreserveDraft(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	keyring.MockInit()
+
+	m := dashboardFixture()
+	m.homeInput = textField{value: "Keep the draft", limit: 2000}
+	m.providers = providerSettings{open: true, step: providerModel, sequence: 5,
+		models: []providers.Model{{ID: "deepseek-flash"}}, secret: "fake-local-provider-key"}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	m = next.(model)
+	if cmd != nil || m.providers.step != providerOptions {
+		t.Fatal("model selection must open settings before saving")
+	}
+
+	for range 3 {
+		next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+		m = next.(model)
+	}
+
+	if m.providers.options.Reasoning != "high" {
+		t.Fatal("DeepSeek levels must be default/off/low/high/max")
+	}
+
+	next, _ = m.Update(tea.PasteMsg{Content: "accidental-paste"})
+
+	m = next.(model)
+	if m.providers.query.value != "" {
+		t.Fatal("settings must ignore unrelated pasted input")
+	}
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	next, _ = next.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	m = next.(model)
+	if m.providers.options.MaxTokens != 32768 {
+		t.Fatal("output control must update the limit")
+	}
+
+	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	m = next.(model)
+	if cmd == nil || !m.providers.saving || m.providers.secret != "" || m.providers.key.value != "" {
+		t.Fatal("save must clear credentials from the view state")
+	}
+
+	next, _ = m.Update(cmd())
+
+	m = next.(model)
+	if m.providers.open || m.homeInput.value != "Keep the draft" {
+		t.Fatal("save must close the modal and preserve the task draft")
+	}
+
+	key, connection, err := providers.Credential(m.profile, "deepseek")
+	if err != nil || key != "fake-local-provider-key" || connection.Storage != "encrypted" ||
+		connection.Reasoning != "high" || connection.MaxTokens != 32768 {
+		t.Fatalf("saved settings/key: %+v, %v", connection, err)
+	}
+}
+
+func TestProviderSettingsHonorMandatoryReasoningAndBudgets(t *testing.T) {
+	m := dashboardFixture()
+
+	m.providers = providerSettings{open: true, provider: 1, step: providerOptions,
+		chosen: providers.Model{ID: "author/model", Reasoning: &providers.ReasoningSupport{
+			SupportedEfforts: []byte(`["high","low","none"]`), Mandatory: true, SupportsMaxTokens: true,
+		}}, options: providers.Options{MaxTokens: 8192}, secret: "fake-key"}
+	if values := m.providerOptionValues(0); strings.Contains(strings.Join(values, ","), "none") {
+		t.Fatal("mandatory reasoning must not offer Off")
+	}
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	m = next.(model)
+	if m.providers.options.Reasoning != "low" {
+		t.Fatal("use only the model's advertised effort levels")
+	}
+
+	m.providers.optionRow = 2
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	m = next.(model)
+	if m.providers.options.ReasoningTokens != 1024 || m.providers.options.Reasoning != "" {
+		t.Fatal("reasoning budget must replace effort")
+	}
+
+	m.providers.optionRow = 0
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	m = next.(model)
+	if m.providers.options.ReasoningTokens != 0 {
+		t.Fatal("effort must replace reasoning budget")
+	}
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m = next.(model)
+	if m.providers.step != providerModel || m.providers.secret != "fake-key" {
+		t.Fatal("Esc from settings must return to model selection")
 	}
 }
 

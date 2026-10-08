@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -24,7 +25,9 @@ func (m model) providerLayout() postLayout {
 	} else if p.step == providerModel {
 		title, group, footer = "Select a model", providerLabel(
 			providers.Names[p.provider],
-		), "↑↓ choose · Enter save"
+		), "↑↓ choose · Enter continue"
+	} else if p.step == providerOptions {
+		title, footer = "Model settings", "Tab next · ←→ adjust · Enter save"
 	}
 
 	input := field.render(inside, !p.busy)
@@ -37,9 +40,52 @@ func (m model) providerLayout() postLayout {
 
 	l := postLayout{rows: []string{"", align(bold(title), muted("esc"), inside), "", input, ""}}
 	l.hit(popupWidth-5, 1, 3, 1, "provider-back", 0)
-	l.hit(2, 3, inside, 1, "provider-input", 0)
 
-	if p.step == providerKey {
+	if p.step != providerOptions {
+		l.hit(2, 3, inside, 1, "provider-input", 0)
+	}
+
+	if p.step == providerOptions {
+		l.rows[3] = muted(plain(p.chosen.DisplayName()))
+
+		reasoning := p.options.Reasoning
+		if reasoning == "" {
+			reasoning = "Provider default"
+		} else if reasoning == "none" {
+			reasoning = "Off"
+		}
+
+		name := providers.Names[p.provider]
+		if len(p.chosen.ReasoningLevels(name)) == 1 {
+			reasoning = "Provider default (fixed)"
+		}
+
+		labels := []string{
+			"Reasoning     ‹ " + reasoning + " ›",
+			"Output limit  ‹ " + strconv.Itoa(p.options.OutputLimit()) + " tokens ›",
+		}
+		if p.chosen.SupportsReasoningBudget(name) {
+			budget := strconv.Itoa(p.options.ReasoningTokens) + " tokens"
+			if p.options.ReasoningTokens == 0 {
+				budget = "Automatic"
+			}
+
+			labels = append(labels, "Think budget  ‹ "+budget+" ›")
+		}
+
+		for i, label := range labels {
+			if i == p.optionRow {
+				label = accent(label)
+			} else {
+				label = muted(label)
+			}
+
+			l.hit(2, len(l.rows), inside, 1, "provider-option", i)
+			l.rows = append(l.rows, label)
+		}
+
+		l.rows = append(l.rows, muted("Output limit includes thinking tokens."))
+	} else if p.step == providerKey {
 		label := providerLabel(providers.Names[p.provider]) + " · encrypted locally"
 		if connection, ok := p.config.Connections[providers.Names[p.provider]]; ok && p.key.value == "" {
 			if connection.Storage == "encrypted" {
@@ -78,7 +124,7 @@ func (m model) providerLayout() postLayout {
 
 				label = mark + providerLabel(name)
 			} else {
-				label, action, index = "  "+p.models[index].ID, "provider-model", row
+				label, action, index = "  "+plain(p.models[index].DisplayName()), "provider-model", row
 			}
 
 			label = ansi.Truncate(label, inside, "…")
@@ -115,7 +161,10 @@ func (m model) providerLayout() postLayout {
 	}
 
 	l.rows = append(l.rows, "")
-	l.hit(2, len(l.rows), min(inside, ansi.StringWidth(footer)), 1, "provider-submit", 0)
+	footer = compactHint(footer, inside)
+	primary, _, _ := strings.Cut(footer, " · ")
+	l.hit(2, len(l.rows), min(inside, ansi.StringWidth(primary)), 1, "provider-submit", 0)
+	l.hit(2+ansi.StringWidth(footer)-len("F1 help"), len(l.rows), len("F1 help"), 1, "provider-help", 0)
 
 	l.rows = append(l.rows, muted(footer), "")
 	for i, row := range l.rows {
@@ -188,6 +237,11 @@ func (m model) updateProviderMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m.backProvider()
 		}
 
+		if hit.action == "provider-help" {
+			m.shortcutsOpen, m.shortcutScroll = true, 0
+			return m, nil
+		}
+
 		if m.providers.busy {
 			return m, nil
 		}
@@ -197,7 +251,10 @@ func (m model) updateProviderMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m.chooseProvider(hit.index)
 		case "provider-model":
 			m.providers.selection = hit.index
-			return m.saveProvider()
+			return m.chooseProviderModel()
+		case "provider-option":
+			m.providers.optionRow = hit.index
+			return m.changeProviderOption(1)
 		case "provider-submit":
 			return m.updateProviders(tea.KeyPressMsg{Code: tea.KeyEnter})
 		case "provider-input":

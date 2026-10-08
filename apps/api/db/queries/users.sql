@@ -28,8 +28,8 @@ SELECT id, username, avatar, github_login FROM users WHERE id = ANY($1::bigint[]
 
 -- name: CreatePost :one
 INSERT INTO posts (user_id,title,cost_lamports,end_time,status,level,description,acceptance_criteria,input_files,expected_outputs,
-    funding_window_seconds, deliver_by, review_window_seconds)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    funding_window_seconds, deliver_by, review_window_seconds, target_worker)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
 -- name: GetUrPosts :many
@@ -40,7 +40,8 @@ ORDER BY created_at DESC;
 
 -- name: FetchPostByLevel :many
 SELECT * from posts WHERE level=$1 AND user_id<>$2 AND status='open'
-    AND accepted_by IS NULL AND end_time > NOW() ORDER BY created_at DESC;
+    AND accepted_by IS NULL AND end_time > NOW()
+    AND (target_worker IS NULL OR target_worker = $2) ORDER BY created_at DESC;
 
 
 -- name: DeleteYourPost :execrows

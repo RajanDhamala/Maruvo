@@ -228,6 +228,8 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			}
 
 			return m.updatePosts(tea.KeyPressMsg{Code: rune(hit.action[0]), Text: hit.action})
+		case "workspace-control":
+			return m.openAgentControls()
 		case "workspace-tab":
 			return m.workspaceCommand("tab")
 		case "workspace-file":

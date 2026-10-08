@@ -27,6 +27,7 @@ UPDATE posts SET accepted_by = sqlc.arg(worker_id), accepted_at = NOW(),
 FROM wallets AS poster, wallets AS worker
 WHERE posts.id = sqlc.arg(post_id) AND posts.user_id <> sqlc.arg(worker_id)
     AND posts.status = 'open' AND posts.accepted_by IS NULL AND posts.end_time > NOW()
+    AND (posts.target_worker IS NULL OR posts.target_worker = sqlc.arg(worker_id))
     AND poster.user_id = posts.user_id AND worker.user_id = sqlc.arg(worker_id)
 RETURNING posts.*;
 

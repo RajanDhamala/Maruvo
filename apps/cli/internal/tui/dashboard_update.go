@@ -60,7 +60,7 @@ func (m model) updateDashboard(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.dashboard.focus = dashboardTasks
 		case "enter":
-			return m.createDashboardDraft(), nil
+			return m.sendDashboardPrompt()
 		default:
 			m.homeInput.limit = 2000
 			m.homeInput.key(msg)
@@ -254,7 +254,7 @@ func (m model) updateDashboardMouse(hit hitArea, x, y int) (tea.Model, tea.Cmd) 
 	case "dashboard-task":
 		return m.openDashboardTask(hit.index)
 	case "dashboard-submit":
-		return m.createDashboardDraft(), nil
+		return m.sendDashboardPrompt()
 	case "dashboard-search":
 		m.dashboard.focus = dashboardSearch
 		m.dashboard.search.cursor = len([]rune(m.dashboard.search.value))

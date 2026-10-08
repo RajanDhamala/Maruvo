@@ -31,13 +31,17 @@ func commandTool(name, description string, required []string, properties map[str
 	}
 
 	format := "json"
-	if name == "events" || name == "run" {
+	if name == "events" || name == "run" || name == "serve" || name == "listen" {
 		format = "ndjson"
 	}
 
 	var fileSchemas map[string]toolSchema
 	if name == "create" {
 		fileSchemas = map[string]toolSchema{"brief": createBriefSchema()}
+	}
+
+	if name == "offer" || name == "connect" {
+		fileSchemas = map[string]toolSchema{"file": offerFileSchema()}
 	}
 
 	return tool{
@@ -60,6 +64,10 @@ func createBriefSchema() toolSchema {
 		Type:     "object",
 		Required: []string{"title", "description", "cost_lamports", "end_time", "level"},
 		Properties: map[string]toolParameter{
+			"target_worker": {
+				Type:        "integer",
+				Description: "Optional seller user_id from offers; only this seller may accept. Offline requests queue. Budget must meet the seller's minimum.",
+			},
 			"title": {
 				Type:        "string",
 				Description: "Nonempty task title, up to 500 characters",
@@ -100,6 +108,30 @@ func createBriefSchema() toolSchema {
 	}
 }
 
+func offerFileSchema() toolSchema {
+	return toolSchema{
+		Type:     "object",
+		Required: []string{"name", "description", "capabilities", "min_lamports", "job_timeout_seconds"},
+		Properties: map[string]toolParameter{
+			"name": {Type: "string", Description: "Seller agent name, 1-80 characters"},
+			"description": {
+				Type:        "string",
+				Description: "Work offered and limits, 1-4000 characters",
+			},
+			"capabilities": {
+				Type:        "array",
+				Description: "1-10 unique capabilities, at most 40 characters each; agents interpret their meaning",
+				Items:       &toolParameter{Type: "string"},
+			},
+			"min_lamports": {Type: "integer", Description: "Positive minimum payment per job"},
+			"job_timeout_seconds": {
+				Type:        "integer",
+				Description: "60-86400 seconds per delivery attempt, excluding funding/review waiting",
+			},
+		},
+	}
+}
+
 func toolList() []tool {
 	post := toolParameter{Type: "integer", Description: "Positive task ID"}
 	after := toolParameter{Type: "integer", Description: "Last received event ID; defaults to 0"}
@@ -109,6 +141,154 @@ func toolList() []tool {
 	}
 
 	return []tool{
+		commandTool(
+			"control",
+			"Owner-only task control. Manual mode revokes your task grants and pauses your automation; agent mode allows new grants without restoring old credentials.",
+			[]string{"post"},
+			map[string]toolParameter{
+				"post": post,
+				"mode": {
+					Type:        "string",
+					Description: "Omit to inspect your control mode",
+					Enum:        []string{"manual", "agent"},
+				},
+			},
+		),
+		commandTool(
+			"connect",
+			"Save an API/account-bound external harness connection. --file optionally publishes seller terms; --prompt supports a harness that accepts prompts on stdin.",
+			[]string{"exec"},
+			map[string]toolParameter{
+				"exec": {
+					Type:        "string",
+					Description: "Existing harness or adapter executable",
+				},
+				"arg": {
+					Type:        "array",
+					Description: "Repeatable harness argument",
+					Items:       &toolParameter{Type: "string"},
+				},
+				"dir": {
+					Type:        "string",
+					Description: "Work directory; defaults to ./maruvo-work",
+				},
+				"file": {Type: "string", Description: "Optional offer JSON file for sellers"},
+				"prompt": {
+					Type:        "boolean",
+					Description: "Translate select/execute/inbox JSON into a prompt on stdin",
+				},
+			},
+		),
+		commandTool(
+			"connection",
+			"Inspect the current account's saved harness connection without exposing its arguments.",
+			nil,
+			map[string]toolParameter{},
+		),
+		commandTool(
+			"bridge",
+			"Thin JSON-to-prompt bridge for an existing headless harness. Reads trusted task context on stdin; it does not implement a model or execution harness.",
+			[]string{"exec"},
+			map[string]toolParameter{
+				"exec": {
+					Type:        "string",
+					Description: "Headless harness that reads a prompt on stdin",
+				},
+				"arg": {
+					Type:        "array",
+					Description: "Repeatable harness argument",
+					Items:       &toolParameter{Type: "string"},
+				},
+			},
+		),
+		commandTool(
+			"inbox",
+			"Read up to 100 requester, worker, reviewer and directed tasks, with active work first and remote execution/presence status.",
+			nil,
+			map[string]toolParameter{},
+		),
+		commandTool(
+			"listen",
+			"Resume pending updates for requester-owned accepted tasks using the saved or explicit harness. Checkpoints after successful handling and suppresses own replies. No model call when idle. Closed tasks receive read-only access.",
+			nil,
+			map[string]toolParameter{
+				"exec": {
+					Type:        "string",
+					Description: "Optional harness override; otherwise uses connect configuration",
+				},
+				"arg": {
+					Type:        "array",
+					Description: "Repeatable harness argument",
+					Items:       &toolParameter{Type: "string"},
+				},
+				"dir":     {Type: "string", Description: "Optional work directory override"},
+				"prompt":  {Type: "boolean", Description: "Translate JSON into a prompt"},
+				"timeout": {Type: "string", Description: "Total listening time; defaults to 30m"},
+				"once":    {Type: "boolean", Description: "Handle pending updates once and exit"},
+			},
+		),
+		commandTool(
+			"activity",
+			"Assigned worker reports progress or a pending clarification under the current runner's task lease. Empty state only renews the heartbeat.",
+			[]string{"post"},
+			map[string]toolParameter{
+				"post":   post,
+				"run-id": {Type: "string", Description: "Defaults to MARUVO_RUN_ID from the runner"},
+				"state": {
+					Type: "string",
+					Enum: []string{
+						"starting",
+						"working",
+						"waiting_for_answer",
+						"waiting_for_review",
+						"interrupted",
+						"failed",
+					},
+				},
+				"text": {Type: "string", Description: "Progress detail up to 1000 characters"},
+			},
+		),
+		commandTool(
+			"offers",
+			"Discover online and offline sellers, their user IDs, capabilities, minimum payment and availability.",
+			nil,
+			map[string]toolParameter{},
+		),
+		commandTool(
+			"offer",
+			"Read your seller offer, or publish updated terms while offline with --file.",
+			nil,
+			map[string]toolParameter{
+				"file": {Type: "string", Description: "Offer JSON file; omit to read your offer"},
+			},
+		),
+		commandTool(
+			"serve",
+			"Advertise capacity, let the selected harness choose a job, then wait for funding and execute. Resumes one active job. Payment signatures remain human-controlled.",
+			nil,
+			map[string]toolParameter{
+				"exec": {
+					Type:        "string",
+					Description: "Owner-selected adapter executable, supporting select and execute modes",
+				},
+				"arg": {
+					Type:        "array",
+					Description: "Repeatable adapter argument",
+					Items:       &toolParameter{Type: "string"},
+				},
+				"dir": {Type: "string", Description: "Working directory; defaults to ./maruvo-work"},
+				"prompt": {
+					Type:        "boolean",
+					Description: "Translate task JSON to a prompt for the explicit harness",
+				},
+				"max-jobs": {Type: "integer", Description: "1-20 jobs; defaults to 1"},
+				"timeout":  {Type: "string", Description: "Total session including waiting; defaults to 30m"},
+				"once": {
+					Type:        "boolean",
+					Description: "Stop after one delivery instead of waiting for review/revisions",
+				},
+			},
+		),
 		commandTool("feed", "Find open tasks at a difficulty level.", nil, map[string]toolParameter{
 			"level": {
 				Type:        "string",

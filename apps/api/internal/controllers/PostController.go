@@ -18,6 +18,7 @@ import (
 )
 
 type CreatePostPayload struct {
+	TargetWorker         *int64        `json:"target_worker,omitempty"`
 	Title                string        `json:"title"`
 	CostLamports         int64         `json:"cost_lamports"`
 	EndTime              time.Time     `json:"end_time"`
@@ -121,7 +122,36 @@ func (c *Controller) CreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if payload.TargetWorker != nil {
+		if *payload.TargetWorker <= 0 || *payload.TargetWorker == userID {
+			postJSON(w, 400, map[string]string{"error": "choose another seller's positive user ID"})
+			return
+		}
+
+		offer, err := c.queries.GetAgentOffer(r.Context(), *payload.TargetWorker)
+		if errors.Is(err, pgx.ErrNoRows) {
+			postJSON(w, 404, map[string]string{"error": "seller offer not found"})
+			return
+		}
+
+		if err != nil {
+			workspaceError(w, err)
+			return
+		}
+
+		if payload.CostLamports < offer.MinLamports {
+			postJSON(w, 400, map[string]string{"error": "payment is below the selected seller's minimum"})
+			return
+		}
+	}
+
+	target := pgtype.Int8{}
+	if payload.TargetWorker != nil {
+		target = pgtype.Int8{Int64: *payload.TargetWorker, Valid: true}
+	}
+
 	post, err := c.queries.CreatePost(r.Context(), db.CreatePostParams{
+		TargetWorker:         target,
 		UserID:               userID,
 		Title:                payload.Title,
 		CostLamports:         payload.CostLamports,

@@ -11,9 +11,11 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
+	"github.com/rajandhamala/Maruvo/cli/internal/api"
 )
 
 func Commands(ctx context.Context, profile string, args []string, in io.Reader, out, log io.Writer) error {
@@ -25,6 +27,21 @@ func Commands(ctx context.Context, profile string, args []string, in io.Reader, 
 	flags.SetOutput(log)
 	provider := flags.String("provider", "", "deepseek or openrouter")
 	model := flags.String("model", "", "model ID from provider models")
+	reasoning := flags.String(
+		"reasoning",
+		"default",
+		"model reasoning level; default leaves it to the provider, none disables it",
+	)
+	maxTokens := flags.Int(
+		"max-tokens",
+		0,
+		"combined reasoning/output limit; defaults to 16384 or the model maximum",
+	)
+	reasoningTokens := flags.Int(
+		"reasoning-tokens",
+		0,
+		"OpenRouter reasoning token budget, when supported; excludes --reasoning",
+	)
 
 	storage := flags.String("storage", "encrypted", "encrypted storage only; requires the OS keyring")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -40,6 +57,11 @@ func Commands(ctx context.Context, profile string, args []string, in io.Reader, 
 	}
 
 	encode := json.NewEncoder(out).Encode
+
+	options := Options{Reasoning: *reasoning, MaxTokens: *maxTokens, ReasoningTokens: *reasoningTokens}
+	if options.Reasoning == "default" {
+		options.Reasoning = ""
+	}
 
 	switch args[0] {
 	case "status":
@@ -100,11 +122,20 @@ func Commands(ctx context.Context, profile string, args []string, in io.Reader, 
 			return errors.New("choose --model from provider models; use /model for the interactive picker")
 		}
 
-		if !containsModel(models, *model) {
-			return errors.New("model is not available from this provider")
+		selected, err := FindModel(models, *model)
+		if err != nil {
+			return err
 		}
 
-		if err := SaveConnection(profile, *provider, *model, key); err != nil {
+		if options.MaxTokens == 0 {
+			options.MaxTokens = min(DefaultMaxTokens, selected.OutputLimit(*provider))
+		}
+
+		if err := selected.ValidateOptions(*provider, options); err != nil {
+			return err
+		}
+
+		if err := SaveConnection(profile, *provider, *model, key, options); err != nil {
 			return err
 		}
 
@@ -139,11 +170,20 @@ func Commands(ctx context.Context, profile string, args []string, in io.Reader, 
 			return err
 		}
 
-		if !containsModel(models, *model) {
-			return errors.New("model is not available from this provider")
+		selected, err := FindModel(models, *model)
+		if err != nil {
+			return err
 		}
 
-		if err := Select(profile, client.provider, *model); err != nil {
+		if options.MaxTokens == 0 {
+			options.MaxTokens = min(DefaultMaxTokens, selected.OutputLimit(client.provider))
+		}
+
+		if err := selected.ValidateOptions(client.provider, options); err != nil {
+			return err
+		}
+
+		if err := Select(profile, client.provider, *model, options); err != nil {
 			return err
 		}
 
@@ -159,17 +199,14 @@ func Commands(ctx context.Context, profile string, args []string, in io.Reader, 
 	}
 }
 
-func containsModel(models []Model, id string) bool {
-	for _, model := range models {
-		if model.ID == id {
-			return true
-		}
-	}
-
-	return false
-}
-
-func ChatCommand(ctx context.Context, profile string, args []string, in io.Reader, out, log io.Writer) error {
+func ChatCommand(
+	ctx context.Context,
+	profile string,
+	args []string,
+	in io.Reader,
+	out, log io.Writer,
+	apis ...*api.Client,
+) error {
 	flags := flag.NewFlagSet("chat", flag.ContinueOnError)
 	flags.SetOutput(log)
 	provider := flags.String("provider", "", "connected provider; defaults to the active one")
@@ -193,6 +230,14 @@ func ChatCommand(ctx context.Context, profile string, args []string, in io.Reade
 		return err
 	}
 
+	var marketplace *Marketplace
+	if len(apis) > 0 {
+		marketplace, err = LoadMarketplace(apis[0], profile)
+		if err != nil {
+			return err
+		}
+	}
+
 	reader := bufio.NewReader(in)
 	approve := func(ctx context.Context, change Approval) (bool, error) {
 		file, ok := in.(*os.File)
@@ -200,8 +245,13 @@ func ChatCommand(ctx context.Context, profile string, args []string, in io.Reade
 			return false, nil
 		}
 
-		fmt.Fprintf(log, "\nProposed file: %s\n%s\nApply this edit? [y/N] ",
-			ansi.Strip(change.Path), ansi.Strip(change.Content))
+		action := change.Action
+		if action == "" {
+			action = "Apply this edit"
+		}
+
+		fmt.Fprintf(log, "\nFile: %s\n%s\n%s? [y/N] ",
+			ansi.Strip(change.Path), ansi.Strip(change.Content), ansi.Strip(action))
 
 		answer, err := reader.ReadString('\n')
 		if err != nil {
@@ -210,9 +260,37 @@ func ChatCommand(ctx context.Context, profile string, args []string, in io.Reade
 
 		return strings.EqualFold(strings.TrimSpace(answer), "y"), ctx.Err()
 	}
+	streaming := false
 	emit := func(event Event) {
+		if event.Type == "assistant_delta" {
+			streaming = true
+
+			fmt.Fprint(out, strings.Map(func(r rune) rune {
+				if unicode.IsControl(r) && r != '\n' && r != '\t' {
+					return -1
+				}
+
+				return r
+			}, ansi.Strip(event.Text)))
+
+			return
+		}
+
+		if event.Type == "reasoning_delta" || event.Type == "reasoning_start" ||
+			event.Type == "response_start" || event.Type == "tool_preparing" {
+			return
+		}
+
 		if event.Type == "assistant" {
-			fmt.Fprintln(out, ansi.Strip(event.Text))
+			if streaming {
+				fmt.Fprintln(out)
+			} else {
+				fmt.Fprintln(out, ansi.Strip(event.Text))
+			}
+
+			streaming = false
+		} else if event.Type == "usage" {
+			fmt.Fprintln(log, ansi.Strip(event.Text))
 		} else {
 			fmt.Fprintln(log, "Agent:", ansi.Strip(event.Text))
 		}
@@ -221,7 +299,7 @@ func ChatCommand(ctx context.Context, profile string, args []string, in io.Reade
 	var history []Message
 
 	if *prompt != "" {
-		_, err := client.RunAgent(ctx, *directory, history, *prompt, approve, emit)
+		_, err := client.RunAgent(ctx, *directory, history, *prompt, approve, emit, marketplace)
 		return err
 	}
 
@@ -229,7 +307,7 @@ func ChatCommand(ctx context.Context, profile string, args []string, in io.Reade
 		log,
 		"Maruvo agent · %s / %s\nType /exit to leave. File edits ask for approval.\n",
 		client.provider,
-		client.model,
+		(Model{ID: client.model}).DisplayName(),
 	)
 
 	for {
@@ -258,7 +336,7 @@ func ChatCommand(ctx context.Context, profile string, args []string, in io.Reade
 			continue
 		}
 
-		updated, err := client.RunAgent(ctx, *directory, history, line, approve, emit)
+		updated, err := client.RunAgent(ctx, *directory, history, line, approve, emit, marketplace)
 		if err != nil {
 			return err
 		}

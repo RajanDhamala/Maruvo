@@ -300,7 +300,9 @@ func (m model) chatSent(msg chatSent) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.setPostError(msg.err)
+	if cmd := m.setPostError(msg.err); cmd != nil {
+		return m, cmd
+	}
 
 	if msg.err == nil {
 		m.composer.draft = textField{limit: 4000}
@@ -349,6 +351,14 @@ func (m model) composerRows(width int) []string {
 	lines := strings.Split(ansi.Wrap(input, max(1, width-2), ""), "\n")
 
 	maxLines := m.bodyHeight() - 4
+	if m.bodyHeight() >= 10 {
+		maxLines--
+	}
+
+	if m.workspace.Post.Remote.Status != "" {
+		maxLines--
+	}
+
 	if len(c.attachments) > 0 {
 		maxLines--
 	}

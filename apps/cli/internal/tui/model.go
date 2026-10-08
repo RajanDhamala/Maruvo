@@ -22,6 +22,8 @@ var levels = []string{"easy", "medium", "complex"}
 var statuses = []string{"open", "negotiating", "in_progress", "completed", "cancelled"}
 
 type model struct {
+	shortcutsOpen          bool
+	shortcutScroll         int
 	ctx                    context.Context
 	client                 *api.Client
 	profile                string
@@ -41,6 +43,8 @@ type model struct {
 	commands               commandMenu
 	providers              providerSettings
 	localAgent             localAgentState
+	remote                 remoteState
+	agentControls          agentControls
 	dashboard              dashboardState
 	profileOpen            bool
 	walletAddress          string
@@ -108,5 +112,5 @@ func (m model) Init() tea.Cmd {
 		return m.sendDemo()
 	}
 
-	return tea.Batch(m.restoreSession(), deadlineTick())
+	return tea.Batch(m.restoreSession(), deadlineTick(), remoteTick())
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,16 +26,19 @@ type artifact struct {
 }
 
 type taskContext struct {
-	CLI                string     `json:"cli"`
-	CLIArguments       []string   `json:"cli_arguments"`
-	Instructions       string     `json:"instructions"`
-	Task               api.Post   `json:"task"`
-	SubmissionVersion  int64      `json:"submission_version"`
-	ReviewNote         string     `json:"review_note"`
-	PreviousSubmission string     `json:"previous_submission"`
-	Inputs             []artifact `json:"inputs"`
-	PreviousDelivery   []artifact `json:"previous_delivery"`
-	OutputDirectory    string     `json:"output_directory"`
+	Mode               string               `json:"mode"`
+	CLI                string               `json:"cli"`
+	CLIArguments       []string             `json:"cli_arguments"`
+	Instructions       string               `json:"instructions"`
+	Task               api.Post             `json:"task"`
+	SubmissionVersion  int64                `json:"submission_version"`
+	ReviewNote         string               `json:"review_note"`
+	PreviousSubmission string               `json:"previous_submission"`
+	Inputs             []artifact           `json:"inputs"`
+	PreviousDelivery   []artifact           `json:"previous_delivery"`
+	OutputDirectory    string               `json:"output_directory"`
+	Events             []api.WorkspaceEvent `json:"events"`
+	Cursor             string               `json:"cursor"`
 }
 
 var workReady = errors.New("task ready")
@@ -106,6 +110,10 @@ func awaitTask(
 			return workReady
 		}
 
+		if workspace.AgentControl.Mode == "manual" {
+			return errAgentPaused
+		}
+
 		if strings.TrimSpace(workspace.Post.Description) == "" {
 			return errors.New(
 				"task needs a description before using an agent runner",
@@ -171,6 +179,7 @@ func runTask(
 	args []string,
 	once bool,
 	out, log io.Writer,
+	executionTimeout ...time.Duration,
 ) error {
 	userID, err := strconv.ParseInt(user.ID, 10, 64)
 	if err != nil {
@@ -213,8 +222,60 @@ func runTask(
 			)
 		}
 
-		if err = executeTask(
+		runID := rand.Text() + rand.Text()
+		if err = client.ReportActivity(
 			ctx,
+			token,
+			postID,
+			runID,
+			"working",
+			"Executing delivery",
+		); err != nil {
+			return err
+		}
+
+		runCtx, cancelRun := context.WithCancelCause(ctx)
+		stopControl := func() {}
+
+		if !strings.HasPrefix(token, "mru_agent_") {
+			controlled, stop, controlErr := controlledTaskContext(runCtx, client, token, postID)
+			if controlErr != nil {
+				cancelRun(controlErr)
+				return controlErr
+			}
+
+			runCtx, stopControl = controlled, stop
+		}
+
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+
+			ticker := time.NewTicker(20 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case <-ticker.C:
+					if err := client.ReportActivity(runCtx, token, postID, runID, "", ""); err != nil {
+						cancelRun(err)
+						return
+					}
+				}
+			}
+		}()
+
+		executionCtx := runCtx
+
+		stop := func() {}
+		if len(executionTimeout) > 0 {
+			executionCtx, stop = context.WithTimeout(runCtx, executionTimeout[0])
+		}
+
+		err = executeTask(
+			executionCtx,
 			client,
 			token,
 			profile,
@@ -224,7 +285,40 @@ func runTask(
 			args,
 			out,
 			log,
-		); err != nil {
+			len(executionTimeout) > 0,
+			runID,
+		)
+
+		stop()
+
+		if err != nil && context.Cause(runCtx) != nil {
+			err = context.Cause(runCtx)
+		}
+
+		cancelRun(nil)
+		stopControl()
+		<-heartbeatDone
+
+		cleanup, cleanupStop := context.WithTimeout(context.Background(), 5*time.Second)
+
+		state, detail := "waiting_for_review", "Delivery submitted; reviewer action required"
+		if err != nil {
+			state, detail = "failed", "Harness attempt failed; resume explicitly"
+		}
+
+		if ctx.Err() != nil {
+			state, detail = "interrupted", "Runner stopped; assignment retained"
+		}
+
+		if agentPaused(err) {
+			state, detail = "interrupted", "Human took over; agent access paused"
+		}
+
+		_ = client.ReportActivity(cleanup, token, postID, runID, state, detail)
+
+		cleanupStop()
+
+		if err != nil {
 			return err
 		}
 
@@ -242,6 +336,8 @@ func executeTask(
 	directory, executable string,
 	args []string,
 	out, log io.Writer,
+	scoped bool,
+	runIDs ...string,
 ) error {
 	postID, version := workspace.Post.ID, workspace.State.SubmissionVersion
 
@@ -267,6 +363,7 @@ func executeTask(
 	}
 
 	task := taskContext{
+		Mode:               "execute",
 		CLI:                cli,
 		CLIArguments:       []string{"-api", client.URL(), "-profile", profile, "agent"},
 		Instructions:       "Complete task.description using the provided inputs. Follow task.acceptance_criteria and review_note. Write each task.expected_outputs filename into output_directory. Exit nonzero if the task cannot be completed. Maruvo will upload only the declared outputs and submit them for human review. To communicate or share files, invoke cli with cli_arguments followed by chat, files, send-file, or download; tools lists the available commands.",
@@ -277,6 +374,8 @@ func executeTask(
 		Inputs:             []artifact{},
 		PreviousDelivery:   []artifact{},
 		OutputDirectory:    filepath.Join(runDir, "output"),
+		Events:             workspace.Events,
+		Cursor:             workspace.Cursor,
 	}
 	if len(workspace.Post.ExpectedOutputs) == 0 {
 		task.Instructions = "Complete task.description using the provided inputs. Follow task.acceptance_criteria (the expected result) and review_note. Write the result and a delivery summary as UTF-8 text in output_directory/result.txt, at most 4,000 characters and 16,000 bytes. Maruvo submits this text for human review. Additional files are shared only through explicit send-file tool calls; other output files and logs are not uploaded automatically. Exit nonzero if the task cannot be completed. Invoke cli with cli_arguments followed by chat, files, send-file, or download; tools lists the commands."
@@ -342,22 +441,59 @@ func executeTask(
 		return err
 	}
 
-	command := exec.CommandContext(ctx, executable, args...)
-	command.Dir, command.Stdin, command.Stdout, command.Stderr = runDir, strings.NewReader(
-		string(contextJSON),
-	), log, log
-	command.WaitDelay = 5 * time.Second
-
-	for _, value := range os.Environ() {
-		name, _, _ := strings.Cut(value, "=")
-		if name != "MARUVO_TOKEN" && name != "MARUVO_WALLET" && name != "JWT_TOKEN" &&
-			name != "DATABASE_URL" {
-			command.Env = append(command.Env, value)
-		}
+	var env []string
+	if len(runIDs) > 0 {
+		env = append(env, "MARUVO_RUN_ID="+runIDs[0])
 	}
 
-	command.Env = append(command.Env, "MARUVO_TASK_FILE="+contextPath)
-	if err = command.Run(); err != nil {
+	if scoped {
+		credential, grantErr := client.CreateAgentGrant(
+			ctx,
+			token,
+			postID,
+			"serving worker",
+			[]string{
+				"read",
+				"message",
+				"upload",
+				"submit",
+			},
+			min(24*time.Hour, max(time.Minute, remainingExecution(ctx))),
+		)
+		if grantErr != nil {
+			return grantErr
+		}
+
+		credentialPath := filepath.Join(runDir, ".agent-session.json")
+
+		defer func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+
+			if _, revokeErr := client.RevokeAgentGrant(
+				cleanup,
+				token,
+				credential.Grant.ID,
+			); revokeErr != nil {
+				fmt.Fprintln(log, "Could not revoke the temporary task grant; it will expire automatically.")
+			}
+
+			_ = os.Remove(credentialPath)
+		}()
+
+		if credential.Token == "" || credential.Grant.ID == "" {
+			return errors.New("API returned incomplete task credentials")
+		}
+
+		data, _ := json.Marshal(credential)
+		if err = os.WriteFile(credentialPath, data, 0600); err != nil {
+			return err
+		}
+
+		env = append(env, "MARUVO_AGENT_TOKEN_FILE="+credentialPath)
+	}
+
+	if err = executeHarness(ctx, executable, args, runDir, contextJSON, log, env...); err != nil {
 		return fmt.Errorf("agent harness failed; delivery was not submitted: %w", err)
 	}
 
@@ -463,4 +599,51 @@ func readOutput(root *os.Root, name string) ([]byte, error) {
 	defer file.Close()
 
 	return io.ReadAll(io.LimitReader(file, (10<<20)+1))
+}
+
+func remainingExecution(ctx context.Context) time.Duration {
+	if deadline, ok := ctx.Deadline(); ok {
+		return time.Until(deadline)
+	}
+
+	return time.Hour
+}
+
+func executeHarness(
+	ctx context.Context,
+	executable string,
+	args []string,
+	directory string,
+	payload []byte,
+	log io.Writer,
+	extraEnv ...string,
+) error {
+	contextPath := filepath.Join(directory, "task.json")
+	if err := os.WriteFile(contextPath, payload, 0600); err != nil {
+		return err
+	}
+
+	command := exec.CommandContext(ctx, executable, args...)
+	command.Dir, command.Stdin, command.Stdout, command.Stderr = directory, strings.NewReader(
+		string(payload),
+	), log, log
+	command.WaitDelay = 5 * time.Second
+
+	for _, value := range os.Environ() {
+		name, _, _ := strings.Cut(value, "=")
+		if name != "MARUVO_TOKEN" && name != "MARUVO_WALLET" && name != "JWT_TOKEN" &&
+			name != "DATABASE_URL" &&
+			name != "MARUVO_TASK_FILE" {
+			if name == "MARUVO_AGENT_TOKEN_FILE" && len(extraEnv) > 0 {
+				continue
+			}
+
+			command.Env = append(command.Env, value)
+		}
+	}
+
+	command.Env = append(command.Env, "MARUVO_TASK_FILE="+contextPath)
+	command.Env = append(command.Env, extraEnv...)
+
+	return command.Run()
 }

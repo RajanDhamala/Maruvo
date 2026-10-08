@@ -36,11 +36,6 @@ func main() {
 	}
 
 	command := commandInvocation(os.Args[1:])
-	if command != "provider" && command != "chat" {
-		if err := walletconfig.LoadConfig(); err != nil {
-			fail(fmt.Errorf("load local Solana configuration: %w", err))
-		}
-	}
 
 	defaultURL := os.Getenv("API_URL")
 	if defaultURL == "" {
@@ -75,6 +70,14 @@ func main() {
 	}
 
 	args := flags.Args()
+
+	bridgeMode := len(args) > 1 && args[0] == "agent" && args[1] == "bridge"
+	if command != "provider" && command != "chat" && !bridgeMode {
+		if err := walletconfig.LoadConfig(); err != nil {
+			fail(fmt.Errorf("load local Solana configuration: %w", err))
+		}
+	}
+
 	if len(args) > 0 && (args[0] == "provider" || args[0] == "chat") {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
@@ -88,7 +91,30 @@ func main() {
 		if args[0] == "provider" {
 			err = providers.Commands(ctx, *profile, args[1:], os.Stdin, os.Stdout, os.Stderr)
 		} else {
-			err = providers.ChatCommand(ctx, *profile, args[1:], os.Stdin, os.Stdout, os.Stderr)
+			*apiURL = strings.TrimRight(*apiURL, "/")
+
+			parsed, parseErr := url.Parse(*apiURL)
+			if parseErr != nil || parsed.Host == "" ||
+				(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+				parsed.RawQuery != "" ||
+				parsed.Fragment != "" ||
+				parsed.User != nil {
+				fail(
+					errors.New(
+						"API URL must be an http(s) base URL without credentials, a query or fragment",
+					),
+				)
+			}
+
+			err = providers.ChatCommand(
+				ctx,
+				*profile,
+				args[1:],
+				os.Stdin,
+				os.Stdout,
+				os.Stderr,
+				api.NewClient(*apiURL),
+			)
 		}
 
 		if err != nil {
@@ -112,7 +138,7 @@ func main() {
 		fail(agent.InvalidArgument(err.Error()))
 	}
 
-	if !*check && !*demo && !listTools {
+	if !*check && !*demo && !listTools && !bridgeMode {
 		chosen := *wallet
 		if chosen == "" {
 			chosen = explicitWallet

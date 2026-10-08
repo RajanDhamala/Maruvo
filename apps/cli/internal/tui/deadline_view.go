@@ -29,9 +29,17 @@ func (m model) deadlineLayout() postLayout {
 		title = "Deliver by"
 	}
 
-	l := postLayout{
-		rows: []string{align(bold(title), muted("Local · UTC"+zoneDate.Format("-07:00")), width)},
-	}
+	zone := "Local · UTC" + zoneDate.Format("-07:00") + " · F1 help"
+	l := postLayout{rows: []string{
+		bold(
+			title,
+		) + strings.Repeat(
+			" ",
+			max(2, width-ansi.StringWidth(title)-ansi.StringWidth(zone)),
+		) + muted(
+			zone,
+		),
+	}}
 	x := (width - 28) / 2
 	month := p.date.Format("January 2006")
 	gap := 22 - ansi.StringWidth(month)

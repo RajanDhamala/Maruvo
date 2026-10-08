@@ -58,8 +58,8 @@ func TestProviderAuthenticationAndCompletion(t *testing.T) {
 						t.Error("invalid completion payload")
 					}
 
-					if provider == "deepseek" && string(payload["thinking"]) != `{"type":"disabled"}` {
-						t.Error("DeepSeek tool requests must disable thinking")
+					if provider == "deepseek" && len(payload["thinking"]) != 0 {
+						t.Error("default reasoning must retain the provider default")
 					}
 
 					io.WriteString(

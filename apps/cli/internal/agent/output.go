@@ -8,7 +8,33 @@ func outputSchema(name string) map[string]any {
 	integer := map[string]any{"type": "integer"}
 	text := map[string]any{"type": "string"}
 	strings := map[string]any{"type": "array", "items": text}
-	post := objectSchema(map[string]any{"id": integer, "status": text}, "id", "status")
+	remote := objectSchema(
+		map[string]any{
+			"status":             text,
+			"agent_name":         text,
+			"worker_online":      map[string]any{"type": "boolean"},
+			"worker_seen":        text,
+			"detail":             text,
+			"submission_version": integer,
+			"last_event_id":      integer,
+		},
+		"status",
+		"agent_name",
+		"worker_online",
+		"detail",
+		"submission_version",
+		"last_event_id",
+	)
+	post := objectSchema(
+		map[string]any{
+			"id":            integer,
+			"status":        text,
+			"target_worker": map[string]any{"type": []string{"integer", "null"}},
+			"remote":        remote,
+		},
+		"id",
+		"status",
+	)
 	file := objectSchema(map[string]any{
 		"id": text, "post_id": integer, "name": text, "purpose": text, "size": integer, "sha256": text,
 	}, "id", "post_id", "name", "purpose", "size", "sha256")
@@ -31,8 +57,45 @@ func outputSchema(name string) map[string]any {
 		"human_payment_required": map[string]any{"type": "boolean"},
 	}, "role", "terminal", "submission_version", "allowed_actions", "blocked_actions", "upload_purposes",
 		"waiting_for", "input_file_ids", "missing_inputs", "missing_outputs", "human_payment_required")
+	offer := objectSchema(map[string]any{
+		"user_id": integer, "name": text, "description": text, "capabilities": strings,
+		"min_lamports": integer, "job_timeout_seconds": integer,
+		"available":       map[string]any{"type": "boolean"},
+		"online":          map[string]any{"type": "boolean"},
+		"available_until": map[string]any{"type": []string{"string", "null"}}, "updated_at": text,
+	}, "user_id", "name", "description", "capabilities", "min_lamports", "job_timeout_seconds", "available", "updated_at")
 
 	switch name {
+	case "control":
+		return objectSchema(map[string]any{
+			"post_id": integer, "owner_id": integer, "mode": text,
+			"updated_at": text, "revoked_grants": integer,
+		}, "post_id", "owner_id", "mode", "revoked_grants")
+	case "connection":
+		return objectSchema(
+			map[string]any{"executable": text, "directory": text, "argument_count": integer, "status": text},
+			"executable",
+			"directory",
+			"argument_count",
+			"status",
+		)
+	case "connect":
+		return objectSchema(
+			map[string]any{
+				"status": text,
+				"offer":  map[string]any{"oneOf": []any{offer, map[string]any{"type": "null"}}},
+				"next":   text,
+			},
+			"status",
+			"offer",
+			"next",
+		)
+	case "activity":
+		return objectSchema(map[string]any{"status": text}, "status")
+	case "offer":
+		return offer
+	case "offers":
+		return map[string]any{"type": "array", "items": offer}
 	case "history":
 		return objectSchema(map[string]any{
 			"post_id":     integer,
@@ -66,7 +129,7 @@ func outputSchema(name string) map[string]any {
 		return map[string]any{"type": "array", "items": grant}
 	case "revoke":
 		return grant
-	case "feed", "tasks":
+	case "feed", "tasks", "inbox":
 		return map[string]any{"type": []string{"array", "null"}, "items": post}
 	case "create", "accept", "cancel", "reopen":
 		return post
@@ -95,7 +158,7 @@ func outputSchema(name string) map[string]any {
 		}, "event_id", "post_id", "submission_version", "review_state")
 	case "events":
 		return objectSchema(map[string]any{"event": text, "data": map[string]any{}}, "event", "data")
-	case "run":
+	case "run", "serve", "listen":
 		return objectSchema(map[string]any{"event": text}, "event")
 	default:
 		return objectSchema(map[string]any{"status": text}, "status")

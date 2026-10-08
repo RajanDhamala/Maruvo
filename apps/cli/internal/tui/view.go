@@ -9,12 +9,24 @@ import (
 )
 
 func (m model) View() tea.View {
+	if m.shortcutsOpen {
+		return m.shortcutsView()
+	}
+
+	if m.agentControls.open {
+		return m.agentControlsView()
+	}
+
 	if m.providers.open {
 		return m.providersView()
 	}
 
+	if m.remote.open {
+		return m.remoteView()
+	}
+
 	if m.localAgent.open {
-		return m.localAgentView()
+		return m.commandView(m.localAgentView())
 	}
 
 	if !m.demo {
@@ -37,7 +49,8 @@ func (m model) View() tea.View {
 		s += fmt.Sprintf("Connected to %s\n%s\n", m.response.Service, m.response.Message)
 	}
 
-	s += "\nEnter / r: send again    q: quit\n"
+	width, _ := m.dimensions()
+	s += "\n" + compactHint("Enter / r send again · q quit", max(1, width-4)) + "\n"
 	view := tea.NewView(s)
 	view.AltScreen = true
 
@@ -129,9 +142,11 @@ func (m model) frame(body []string, footer string) tea.View {
 	}
 
 	if m.picker.open {
-		footer = muted("Arrows select   PgUp/PgDn month   Tab time   Enter apply   Esc cancel")
+		footer = muted(
+			compactHint("Arrows select · PgUp/PgDn month · Tab time · Enter apply · Esc cancel", inner),
+		)
 		if width < 78 {
-			footer = muted("Arrows · Tab time · Enter apply · Esc cancel")
+			footer = muted(compactHint("Arrows · Tab time · Enter apply · Esc cancel", inner))
 		}
 	} else if m.profileOpen {
 		footer = "w wallet · Enter log out · Esc close"
@@ -139,13 +154,13 @@ func (m model) frame(body []string, footer string) tea.View {
 			footer = "g connect GitHub · " + footer
 		}
 
-		footer = muted(footer)
+		footer = muted(compactHint(footer, inner))
 	} else if m.err != nil && m.screen == workspaceScreen {
 		footer = warning(plain(m.err.Error()))
 	} else if m.notice != "" && m.screen == workspaceScreen {
-		footer = accent(m.notice) + "   " + muted(footer)
+		footer = accent(m.notice) + "   " + muted(compactHint(footer, inner))
 	} else {
-		footer = muted(footer)
+		footer = muted(compactHint(footer, inner))
 	}
 
 	statusLine := ""

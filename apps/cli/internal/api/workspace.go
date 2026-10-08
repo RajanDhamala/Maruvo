@@ -52,15 +52,17 @@ type WorkspaceState struct {
 }
 
 type Workspace struct {
-	Context    TaskContext      `json:"context"`
-	Cursor     string           `json:"cursor"`
-	Post       Post             `json:"post"`
-	Escrow     Escrow           `json:"escrow"`
-	State      WorkspaceState   `json:"workspace"`
-	Files      []WorkspaceFile  `json:"files"`
-	Events     []WorkspaceEvent `json:"events"`
-	CanReview  bool             `json:"can_review"`
-	Settlement Settlement       `json:"settlement"`
+	AgentControl    AgentControl     `json:"agent_control"`
+	HistoryRequired bool             `json:"history_required,omitempty"`
+	Context         TaskContext      `json:"context"`
+	Cursor          string           `json:"cursor"`
+	Post            Post             `json:"post"`
+	Escrow          Escrow           `json:"escrow"`
+	State           WorkspaceState   `json:"workspace"`
+	Files           []WorkspaceFile  `json:"files"`
+	Events          []WorkspaceEvent `json:"events"`
+	CanReview       bool             `json:"can_review"`
+	Settlement      Settlement       `json:"settlement"`
 }
 
 type MessageReceipt struct {

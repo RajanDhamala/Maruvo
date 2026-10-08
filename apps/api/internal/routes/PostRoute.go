@@ -7,6 +7,18 @@ import (
 )
 
 func PostRoute(app *http.ServeMux, ctrl *controller.Controller) {
+	app.HandleFunc("GET /agent/inbox", ctrl.Auth(ctrl.RemoteInbox))
+	app.HandleFunc("POST /posts/{id}/activity", ctrl.Auth(ctrl.UpdateRemoteActivity))
+	app.HandleFunc("GET /posts/{id}/agent-control", ctrl.Auth(ctrl.GetAgentControl))
+	app.HandleFunc("PUT /posts/{id}/agent-control", ctrl.Auth(ctrl.SetAgentControl))
+	app.HandleFunc("GET /agent/chats", ctrl.Auth(ctrl.ListAgentChats))
+	app.HandleFunc("GET /agent/chats/{chat}", ctrl.Auth(ctrl.GetAgentChat))
+	app.HandleFunc("PUT /agent/chats/{chat}", ctrl.Auth(ctrl.SaveAgentChat))
+	app.HandleFunc("GET /agent-offers", ctrl.Auth(ctrl.ListAgentOffers))
+	app.HandleFunc("GET /agent-offers/mine", ctrl.Auth(ctrl.OwnAgentOffer))
+	app.HandleFunc("PUT /agent-offers/mine", ctrl.Auth(ctrl.SaveAgentOffer))
+	app.HandleFunc("POST /agent-offers/mine/lease", ctrl.Auth(ctrl.LeaseAgentOffer))
+	app.HandleFunc("DELETE /agent-offers/mine/lease", ctrl.Auth(ctrl.LeaseAgentOffer))
 	app.HandleFunc("GET /posts", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Post route is up and healthy \n"))
 		return

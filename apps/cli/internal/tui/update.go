@@ -1,6 +1,10 @@
 package tui
 
 import (
+	"errors"
+	"strings"
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
 	"github.com/rajandhamala/Maruvo/cli/internal/providers"
@@ -8,21 +12,117 @@ import (
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case agentControlsLoaded:
+		return m.agentControlsLoaded(msg)
+	case remoteClock:
+		cmd := remoteTick()
+
+		if m.remote.open && !m.remote.busy {
+			m.remote.busy = true
+			return m, tea.Batch(cmd, m.fetchRemote())
+		}
+
+		if m.screen == workspaceScreen && m.workspace.Post.ID > 0 && m.token != "" {
+			return m, tea.Batch(cmd, m.refreshRemoteStatus())
+		}
+
+		return m, cmd
+	case remoteLoaded:
+		if m.remote.open && msg.generation == m.remote.generation && msg.token == m.token {
+			m.remote.busy = false
+			m.remote.offers, m.remote.posts, m.remote.err = msg.offers, msg.posts, msg.err
+			m.remote.selection = min(m.remote.selection, max(0, m.remoteCount()-1))
+		}
+
+		return m, nil
+	case remoteStatusLoaded:
+		if msg.generation == m.workspaceGen && m.screen == workspaceScreen && msg.err == nil &&
+			msg.post.ID == m.workspace.Post.ID && !api.StreamCursorAfter(m.workspace.Cursor, msg.cursor) {
+			m.workspace.Post.Remote = msg.post.Remote
+		}
+
+		return m, nil
 	case deadlineClock:
 		return m, deadlineTick()
+	case localAgentTick:
+		if m.localAgent.open && m.localAgent.busy && msg.sequence == m.localAgent.sequence {
+			m.localAgent.frame++
+			return m, m.tickLocalAgent()
+		}
+
+		return m, nil
+	case agentFilesFound:
+		a := &m.localAgent
+		if a.open && !a.busy && !a.sessions.open && a.files.open &&
+			msg.agentSequence == a.sequence && msg.sequence == a.files.sequence {
+			a.files.items, a.files.err, a.files.loading = msg.files, msg.err, false
+		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.MouseClickMsg:
+		if m.agentControls.open {
+			return m, nil
+		}
+
+		if m.remote.open {
+			return m, nil
+		}
+
+		if m.shortcutsOpen {
+			m.shortcutsOpen, m.shortcutScroll = false, 0
+			return m, nil
+		}
+
 		if m.providers.open {
 			return m.updateProviderMouse(msg)
 		}
 
+		if m.commands.open {
+			return m.updateCommandMouse(msg)
+		}
+
 		if m.localAgent.open {
-			return m, nil
+			return m.updateLocalAgentMouse(msg)
 		}
 
 		return m.updateMouse(msg)
 	case tea.MouseWheelMsg:
+		if m.agentControls.open {
+			if msg.Button == tea.MouseWheelUp {
+				return m.updateAgentControls(tea.KeyPressMsg{Code: tea.KeyUp})
+			}
+
+			if msg.Button == tea.MouseWheelDown {
+				return m.updateAgentControls(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+
+			return m, nil
+		}
+
+		if m.remote.open {
+			if msg.Button == tea.MouseWheelUp {
+				return m.updateRemote(tea.KeyPressMsg{Code: tea.KeyUp})
+			}
+
+			if msg.Button == tea.MouseWheelDown {
+				return m.updateRemote(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+
+			return m, nil
+		}
+
+		if m.shortcutsOpen {
+			if msg.Button == tea.MouseWheelUp {
+				return m.updateShortcuts(tea.KeyPressMsg{Code: tea.KeyUp})
+			}
+
+			if msg.Button == tea.MouseWheelDown {
+				return m.updateShortcuts(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+
+			return m, nil
+		}
+
 		if m.providers.open {
 			area := m.providerArea()
 			if msg.X < area.x || msg.X >= area.x+area.width || msg.Y < area.y || msg.Y >= area.y+area.height {
@@ -40,26 +140,72 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.localAgent.open {
-			return m, nil
-		}
+		if m.commands.open {
+			if msg.Button == tea.MouseWheelUp {
+				return m.updateCommands(tea.KeyPressMsg{Code: tea.KeyUp})
+			}
 
-		return m.updateWheel(msg)
-	case tea.PasteMsg:
-		if m.providers.open {
-			if !m.providers.busy && m.providers.step == providerKey {
-				m.providers.key.insert(msg.Content)
-			} else if !m.providers.busy {
-				m.providers.query.insert(msg.Content)
-				m.providers.selection = 0
+			if msg.Button == tea.MouseWheelDown {
+				return m.updateCommands(tea.KeyPressMsg{Code: tea.KeyDown})
 			}
 
 			return m, nil
 		}
 
 		if m.localAgent.open {
-			if !m.localAgent.busy {
-				m.localAgent.input.insert(msg.Content)
+			if m.localAgent.files.open {
+				if msg.Button == tea.MouseWheelUp {
+					return m.updateLocalAgent(tea.KeyPressMsg{Code: tea.KeyUp})
+				}
+
+				if msg.Button == tea.MouseWheelDown {
+					return m.updateLocalAgent(tea.KeyPressMsg{Code: tea.KeyDown})
+				}
+
+				return m, nil
+			}
+
+			if m.localAgent.sessions.open {
+				if msg.Button == tea.MouseWheelUp {
+					return m.updateLocalSessions(tea.KeyPressMsg{Code: tea.KeyUp})
+				}
+
+				if msg.Button == tea.MouseWheelDown {
+					return m.updateLocalSessions(tea.KeyPressMsg{Code: tea.KeyDown})
+				}
+
+				return m, nil
+			}
+
+			if msg.Button == tea.MouseWheelUp {
+				m.localAgent.scroll += 3
+			} else if msg.Button == tea.MouseWheelDown {
+				m.localAgent.scroll = max(0, m.localAgent.scroll-3)
+			}
+
+			return m, nil
+		}
+
+		return m.updateWheel(msg)
+	case tea.PasteMsg:
+		if m.agentControls.open {
+			return m, nil
+		}
+
+		if m.remote.open {
+			return m, nil
+		}
+
+		if m.shortcutsOpen {
+			return m, nil
+		}
+
+		if m.providers.open {
+			if !m.providers.busy && m.providers.step == providerKey {
+				m.providers.key.insert(msg.Content)
+			} else if !m.providers.busy && m.providers.step != providerOptions {
+				m.providers.query.insert(msg.Content)
+				m.providers.selection = 0
 			}
 
 			return m, nil
@@ -68,6 +214,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commands.open {
 			m.commands.query.insert(msg.Content)
 			return m.updateCommandQuery()
+		}
+
+		if m.localAgent.open {
+			if m.localAgent.sessions.open && !m.localAgent.sessions.busy {
+				m.localAgent.sessions.query.insert(msg.Content)
+				m.localAgent.sessions.selection = 0
+			} else if !m.localAgent.busy && !m.localAgent.sessions.open {
+				m.localAgent.input.insert(msg.Content)
+				return m, m.completeAgentInput()
+			}
+
+			return m, nil
 		}
 
 		if m.token == "" && !m.demo && !m.loading {
@@ -100,6 +258,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.token != "" && m.screen == newPostScreen && m.form.timingOpen && !m.loading && !m.profileOpen {
 			if m.form.timingFocus == 0 || m.form.timingFocus == 2 {
 				m.form.timings[m.form.timingFocus].insert(msg.Content)
+
+				if m.form.timingFocus == 0 {
+					m.form.syncDefaultDelivery()
+				}
 			}
 		} else if m.token != "" && m.screen == newPostScreen && !m.loading && !m.profileOpen && m.form.focus < len(m.form.fields) &&
 			m.form.focus != 2 {
@@ -111,6 +273,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			m.localAgent.finishStream(true)
+
 			if m.localAgent.cancel != nil {
 				m.localAgent.cancel()
 			}
@@ -121,19 +285,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.stopWorkspace()
 
-			return m, tea.Quit
+			return m, tea.Sequence(m.saveLocalConversation(), tea.Quit)
+		}
+
+		if m.shortcutsOpen {
+			return m.updateShortcuts(msg)
+		}
+
+		if msg.String() == "f1" {
+			m.shortcutsOpen, m.shortcutScroll = true, 0
+			return m, nil
+		}
+
+		if m.agentControls.open {
+			return m.updateAgentControls(msg)
+		}
+
+		if msg.String() == "ctrl+t" && m.screen == workspaceScreen && m.workspace.Post.ID > 0 &&
+			m.token != "" && !m.loading && m.workspaceAction == "" && !m.reviewConfirm &&
+			!m.profileOpen && !m.providers.open && !m.localAgent.open && !m.remote.open && !m.commands.open {
+			return m.openAgentControls()
+		}
+
+		if m.remote.open {
+			return m.updateRemote(msg)
 		}
 
 		if m.providers.open {
 			return m.updateProviders(msg)
 		}
 
-		if m.localAgent.open {
-			return m.updateLocalAgent(msg)
-		}
-
 		if m.commands.open {
 			return m.updateCommands(msg)
+		}
+
+		if m.localAgent.open {
+			return m.updateLocalAgent(msg)
 		}
 
 		if msg.String() == "/" && m.canOpenCommands() {
@@ -225,41 +412,133 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if msg.removed {
 					m.notice = "Provider disconnected; its saved credential was removed."
 				}
+
+				if m.localAgent.open {
+					return m.openLocalAgent()
+				}
 			}
 		}
 	case localAgentReady:
 		if m.localAgent.open && msg.sequence == m.localAgent.sequence {
 			m.localAgent.busy, m.localAgent.client, m.localAgent.label, m.localAgent.err = false, msg.client, msg.label, msg.err
+
+			m.localAgent.marketplace = msg.marketplace
+
+			m.localAgent.provider, m.localAgent.model = msg.provider, msg.model
+			if m.localAgent.autoSend && msg.err == nil && msg.client != nil {
+				m.localAgent.autoSend = false
+				m.homeInput = textField{}
+
+				return m.sendLocalPrompt()
+			}
 		}
 	case localAgentUpdate:
 		if !m.localAgent.open || msg.sequence != m.localAgent.sequence {
 			return m, nil
 		}
 
+		for _, event := range msg.leading {
+			m.localAgent.applyEvent(event)
+		}
+
 		if msg.done {
+			m.localAgent.finishStream(msg.err != nil)
 			m.localAgent.busy, m.localAgent.err = false, msg.err
+			m.localAgent.chat.Pending = msg.err != nil
 
 			m.localAgent.approval, m.localAgent.answer = nil, nil
 			if msg.err == nil {
 				m.localAgent.history = msg.history
+			} else if m.localAgent.chat.ID != "" {
+				m.localAgent.history = providers.ConversationHistory(m.localAgent.chat)
 			}
 
 			if m.localAgent.cancel != nil {
 				m.localAgent.cancel()
 			}
 
-			return m, nil
+			if m.localAgent.postsChanged && m.token != "" && m.onDashboard() {
+				m.localAgent.postsChanged = false
+				m.loading = true
+				m.dashboard.generation++
+
+				return m, tea.Batch(m.fetchDashboard(), m.saveLocalConversation())
+			}
+
+			return m, m.saveLocalConversation()
 		}
 
 		if msg.approval != nil {
 			m.localAgent.approval, m.localAgent.answer, m.localAgent.scroll = msg.approval, msg.answer, 0
-		} else if msg.event.Type == "assistant" {
-			m.localAgent.lines = append(m.localAgent.lines, "Agent: "+msg.event.Text, "")
-		} else {
-			m.localAgent.lines = append(m.localAgent.lines, "Tool: "+msg.event.Text)
+		} else if !m.localAgent.applyEvent(msg.event) {
+			return m, m.waitLocalAgent()
 		}
 
-		return m, m.waitLocalAgent()
+		return m, tea.Batch(m.waitLocalAgent(), m.saveLocalConversation())
+	case localConversationSaved:
+		if msg.id == m.localAgent.chat.ID && msg.scope == m.localAgent.chatScope &&
+			!msg.updated.Before(m.localAgent.chat.UpdatedAt) {
+			m.localAgent.storageErr = msg.err
+		}
+	case localSessionsLoaded:
+		if m.localAgent.sessions.open && msg.sequence == m.localAgent.sessions.sequence &&
+			msg.agentSequence == m.localAgent.sequence {
+			m.localAgent.sessions.busy = false
+			m.localAgent.sessions.items, m.localAgent.sessions.err = msg.items, msg.err
+
+			m.localAgent.sessions.selection = min(
+				m.localAgent.sessions.selection,
+				max(0, len(m.sessionIndices())-1),
+			)
+			for _, chat := range msg.items {
+				if chat.ID == m.localAgent.chat.ID {
+					m.localAgent.chat.Archived = chat.Archived
+				}
+			}
+		}
+	case localConversationLoaded:
+		if m.localAgent.sessions.open && msg.sequence == m.localAgent.sessions.sequence &&
+			msg.agentSequence == m.localAgent.sequence {
+			m.localAgent.sessions.busy, m.localAgent.sessions.err = false, msg.err
+			if msg.err == nil {
+				a := &m.localAgent
+				a.chat = msg.chat
+
+				a.history, a.lines, a.usage = providers.ConversationHistory(
+					msg.chat,
+				), msg.chat.Lines, msg.chat.Usage
+				for i, line := range a.lines {
+					if partial, ok := strings.CutPrefix(line, "Agent (streaming): "); ok {
+						a.lines[i] = "Agent: " + partial + "\n\n_Response interrupted; incomplete answer._"
+					}
+
+					if strings.HasPrefix(line, "Tool: … ") {
+						a.lines[i] = "Tool: × " + strings.TrimPrefix(
+							line,
+							"Tool: … ",
+						) + "\n  Interrupted; result unknown."
+					}
+				}
+
+				a.toolRows, a.scroll, a.storageErr = nil, 0, nil
+				a.files, a.render = agentFilePicker{sequence: a.files.sequence + 1}, &localAgentRender{}
+				a.streaming, a.thinking, a.thinkStarted, a.thinkTime = false, "", time.Time{}, 0
+				a.input = textField{limit: 12000, byteLimit: 16000, multiline: true}
+				a.input.insert(msg.chat.Draft)
+				a.sessions.open = false
+				a.directory, m.directory, m.homePath = msg.chat.Directory, msg.chat.Directory, displayHomePath(
+					msg.chat.Directory,
+				)
+				m.composer.root = msg.chat.Directory
+				m.composer.sequence++
+				m.composer.suggestions, m.composer.completing = nil, false
+
+				a.status = "Conversation resumed."
+				if msg.chat.Pending {
+					a.status = "Previous request was interrupted. Review its outcome before continuing."
+				}
+			}
+		}
 	case directoryOpened:
 		if !m.commands.open || !m.commands.directory || msg.sequence != m.commands.sequence {
 			return m, nil
@@ -267,12 +546,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.commands.err, m.commands.searching = msg.err, false
 		if msg.err == nil {
+			var save tea.Cmd
+			if m.commands.agent {
+				save = m.saveLocalConversation()
+			}
+
 			m.directory, m.homePath = msg.path, displayHomePath(msg.path)
 			m.commands.open = false
 			m.composer.root = msg.path
 			m.composer.sequence++
 			m.composer.suggestions, m.composer.completing = nil, false
+
 			m.err, m.notice = nil, "Directory opened."
+			if m.commands.agent {
+				next, ready := m.openLocalAgent()
+				return next, tea.Batch(save, ready)
+			}
 		}
 	case demoResult:
 		m.loading = false
@@ -314,7 +603,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.loading = false
-		m.setPostError(msg.err)
+		if cmd := m.setPostError(msg.err); cmd != nil {
+			return m, cmd
+		}
 
 		if msg.err == nil {
 			m.notice = msg.notice
@@ -322,7 +613,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case walletResult:
 		m.loading = false
-		m.setPostError(msg.err)
+		if cmd := m.setPostError(msg.err); cmd != nil {
+			return m, cmd
+		}
 
 		if msg.err == nil {
 			m.walletAddress = msg.address
@@ -330,7 +623,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case escrowResult:
 		m.loading = false
-		m.setPostError(msg.err)
+		if cmd := m.setPostError(msg.err); cmd != nil {
+			return m, cmd
+		}
 
 		if msg.err != nil {
 			return m, nil
@@ -353,6 +648,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Escrow funded. Work can begin."
 		}
 	case authResult:
+		if msg.restored && msg.previousToken != m.token {
+			return m, nil
+		}
+
 		m.picker.open = false
 		m.profileOpen = false
 
@@ -366,8 +665,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.token != "" {
 				return m.openPosts(false)
 			}
-		} else {
+		} else if !msg.restored || unauthorized(msg.err) {
 			m.user, m.token = api.User{}, ""
+		} else if msg.token != "" {
+			m.token = msg.token
+			m.err = errors.New("Could not verify your saved session. Refresh to retry: " + msg.err.Error())
+		}
+	case sessionChecked:
+		if msg.token == m.token && unauthorized(msg.err) {
+			m.stopWorkspace()
+			m.token, m.user, m.posts = "", api.User{}, nil
+			m.localAgent = localAgentState{sequence: m.localAgent.sequence + 1}
+			m.walletAddress = ""
+			m.clearDashboard()
+			m.profileOpen, m.picker.open = false, false
+			m.err = errors.New("Your session expired. Sign in again.")
 		}
 	case githubLinked:
 		m.loading, m.loggingIn, m.err = false, false, msg.err
@@ -382,6 +694,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading, m.err = false, msg.err
 		if msg.err == nil {
 			m.user, m.token = api.User{}, ""
+			m.localAgent = localAgentState{sequence: m.localAgent.sequence + 1}
 			m.walletAddress = ""
 			m.posts, m.notice = nil, ""
 			m.clearDashboard()
@@ -392,7 +705,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.loading = false
-		m.setPostError(msg.err)
+		if cmd := m.setPostError(msg.err); cmd != nil {
+			return m, cmd
+		}
 
 		if msg.err == nil {
 			m.dashboard.feed, m.dashboard.mine, m.dashboard.ready = msg.feed, msg.mine, true
@@ -400,7 +715,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case postChanged:
 		m.loading = false
-		m.setPostError(msg.err)
+		if cmd := m.setPostError(msg.err); cmd != nil {
+			return m, cmd
+		}
 
 		if msg.err != nil {
 			return m, nil

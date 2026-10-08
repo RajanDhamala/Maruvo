@@ -68,9 +68,14 @@ func (m model) conversationRows(width int) []conversationRow {
 			var data struct {
 				ID, Name, Text string
 				Size           int64
+				AgentName      string `json:"agent_name"`
 			}
 
 			_ = json.Unmarshal(event.Data, &data)
+			if data.AgentName != "" {
+				actor += " · agent " + plain(data.AgentName)
+			}
+
 			label := bold(actor) + "  " + muted(event.CreatedAt.Local().Format("15:04"))
 			rows = append(rows, conversationRow{text: label, fileIndex: -1})
 
@@ -111,8 +116,16 @@ func (m model) conversationRows(width int) []conversationRow {
 func (m model) chatLayout() postLayout {
 	width, bodyHeight := m.contentWidth(), m.bodyHeight()
 	post := m.workspace.Post
-	l := postLayout{footer: "Enter send · @ attach · Ctrl+F files · Ctrl+R review · Esc task"}
-	l.rows = []string{align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))), accent(m.live), width)}
+	l := postLayout{
+		footer: "Enter send · @ attach · Ctrl+F files · Ctrl+R review · Ctrl+T controls · Esc task",
+	}
+
+	headerStatus := accent(m.live)
+	if post.Deadline.DueAt != nil && !time.Now().Before(*post.Deadline.DueAt) {
+		headerStatus = warning(deadlineLabel(post.Deadline))
+	}
+
+	l.rows = []string{align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))), headerStatus, width)}
 	links := fmt.Sprintf("Files %d   Review   Task", len(m.workspace.Files))
 	status := "Escrow " + m.workspace.Escrow.State + " · " + strings.ReplaceAll(
 		m.workspace.State.ReviewState,
@@ -121,9 +134,28 @@ func (m model) chatLayout() postLayout {
 	)
 
 	l.rows = append(l.rows, align(muted(status), muted(links), width))
-	if m.workspace.Post.Deadline.DueAt != nil && !time.Now().Before(*m.workspace.Post.Deadline.DueAt) {
+
+	if bodyHeight >= 10 {
+		controlLabel := "Agent access allowed"
+		if m.workspace.AgentControl.Mode == "manual" {
+			controlLabel = "Manual control · agent actions paused"
+		}
+
+		l.hit(width-6, len(l.rows), 6, 1, "workspace-control", 0)
+		l.rows = append(l.rows, align(muted(controlLabel), accent("Agents"), width))
+	} else {
+		label := "Agents"
+		if m.workspace.AgentControl.Mode == "manual" {
+			label = "Manual · Agents"
+		}
+
 		l.rows[0] = align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))),
-			warning(deadlineLabel(m.workspace.Post.Deadline)), width)
+			accent(label)+"  "+headerStatus, width)
+		l.hit(width-ansi.StringWidth(headerStatus)-8, 0, 6, 1, "workspace-control", 0)
+	}
+
+	if post.Remote.Status != "" {
+		l.rows = append(l.rows, muted(remoteLabel(post)))
 	}
 
 	x := width - ansi.StringWidth(links)
@@ -139,12 +171,16 @@ func (m model) chatLayout() postLayout {
 	)
 
 	if m.composer.completing {
-		suggestions = append(
-			suggestions,
-			muted("Attach a local file · "+plain(filepath.Base(m.composer.root))),
-		)
-		suggestionIndexes = append(suggestionIndexes, -1)
-		available := max(1, min(5, bodyHeight-len(l.rows)-len(composer)-1))
+		space := bodyHeight - len(l.rows) - len(composer)
+		if space > 1 {
+			suggestions = append(
+				suggestions,
+				muted("Attach a local file · "+plain(filepath.Base(m.composer.root))),
+			)
+			suggestionIndexes = append(suggestionIndexes, -1)
+		}
+
+		available := max(1, min(5, space-len(suggestions)))
 
 		start := max(0, m.composer.selection-available+1)
 		for i := start; i < min(len(m.composer.suggestions), start+available); i++ {

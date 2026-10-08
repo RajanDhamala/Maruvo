@@ -167,6 +167,7 @@ func (m model) applyDeadline() (tea.Model, tea.Cmd) {
 		} else {
 			m.form.timings[1].value = date.Format("2006-01-02 15:04")
 			m.form.timings[1].cursor = len(m.form.timings[1].value)
+			m.form.deliveryDefault = false
 		}
 	} else if m.recovering == "reopen" {
 		m.recoveryDeadline = date
@@ -174,6 +175,8 @@ func (m model) applyDeadline() (tea.Model, tea.Cmd) {
 		field := &m.form.fields[2]
 		field.value = date.Format("2006-01-02 15:04")
 		field.cursor = len(field.value)
+
+		m.form.syncDefaultDelivery()
 	}
 
 	m.picker.open, m.err = false, nil

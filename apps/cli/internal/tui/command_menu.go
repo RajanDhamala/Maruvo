@@ -17,12 +17,15 @@ var slashCommands = []struct {
 	{"/open", "Open directory"},
 	{"/model", "Connect provider / choose model"},
 	{"/agent", "Open local CLI agent"},
+	{"/sessions", "Browse saved agent chats"},
+	{"/remote", "Remote agents / queued work / harness setup"},
 	{"/priority", "Priority · coming soon"},
 	{"/new", "New task · coming soon"},
 }
 
 type commandMenu struct {
 	open, directory, searching bool
+	agent                      bool
 	query                      textField
 	root                       string
 	selection                  int
@@ -89,12 +92,42 @@ func (m model) commandIndices() []int {
 }
 
 func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
+	if m.commands.agent {
+		if m.localAgent.busy {
+			return m, nil
+		}
+
+		switch slashCommands[index].name {
+		case "/agent":
+			m.commands.open = false
+			return m, nil
+		case "/sessions":
+			m.commands.open = false
+			return m.openLocalSessions()
+		case "/new":
+			m.commands.open = false
+			return m.newLocalConversation()
+		}
+	}
+
+	if slashCommands[index].name == "/remote" {
+		return m.openRemote()
+	}
+
 	if slashCommands[index].name == "/model" {
 		return m.openProviders()
 	}
 
 	if slashCommands[index].name == "/agent" {
 		return m.openLocalAgent()
+	}
+
+	if slashCommands[index].name == "/sessions" {
+		next, ready := m.openLocalAgent()
+		m = next.(model)
+		next, history := m.openLocalSessions()
+
+		return next, tea.Batch(ready, history)
 	}
 
 	if index != 0 {
@@ -268,6 +301,11 @@ func (m model) updateCommandQuery() (tea.Model, tea.Cmd) {
 
 	if !strings.HasPrefix(m.commands.query.value, "/") {
 		m.commands.open = false
+		if m.commands.agent {
+			m.localAgent.input = m.commands.query
+			return m, m.completeAgentInput()
+		}
+
 		if m.commands.query.value != "" {
 			m.homeInput.value, m.homeInput.cursor = m.commands.query.value, m.commands.query.cursor
 		}
@@ -281,6 +319,15 @@ func (m model) updateCommandQuery() (tea.Model, tea.Cmd) {
 
 func (m model) commandPromptArea() hitArea {
 	width, height := m.dimensions()
+	if m.commands.agent {
+		inputHeight := 5
+		if height < 22 {
+			inputHeight = 3
+		}
+
+		return hitArea{x: 2, y: height - inputHeight - 3, width: width - 4, height: inputHeight}
+	}
+
 	if m.token != "" {
 		return hitArea{x: m.contentX(), y: height - homePromptHeight - 3,
 			width: m.dashboardGeometry().mainWidth, height: homePromptHeight}
@@ -296,6 +343,12 @@ func (m model) commandLayout() postLayout {
 	prompt := m.commandPromptArea()
 	width := prompt.width
 	l := postLayout{}
+
+	available := max(1, prompt.y-2)
+	if m.commands.agent {
+		available = max(1, prompt.y-5)
+	}
+
 	put := func(text string) {
 		l.rows = append(l.rows, dashboardPanelRow(ansi.Truncate(text, width-2, "…"), width))
 	}
@@ -306,7 +359,11 @@ func (m model) commandLayout() postLayout {
 		mode, submit = "Open directory", muted("Enter open")
 		put("  " + bold(mode))
 
-		visible := min(5, prompt.y-2)
+		visible := min(5, available)
+		if m.commands.agent {
+			visible = max(1, visible-2)
+		}
+
 		if m.commands.err != nil {
 			visible--
 		}
@@ -337,8 +394,22 @@ func (m model) commandLayout() postLayout {
 			nameWidth = max(nameWidth, ansi.StringWidth(command.name))
 		}
 
-		for row, i := range m.commandIndices() {
+		indices := m.commandIndices()
+
+		visible := max(1, min(len(indices), available))
+		if m.commands.err != nil {
+			visible = max(1, visible-1)
+		}
+
+		start := max(0, m.commands.selection-visible+1)
+		for row := start; row < min(len(indices), start+visible); row++ {
+			i := indices[row]
+
 			command := slashCommands[i]
+			if m.commands.agent && command.name == "/new" {
+				command.label = "Start a new chat"
+			}
+
 			label := "  " + command.name + strings.Repeat(" ", nameWidth-len(command.name)+2) + command.label
 
 			if row == m.commands.selection {
@@ -367,8 +438,13 @@ func (m model) commandLayout() postLayout {
 		put("  " + open + "   " + cancel)
 	}
 
-	l.hit(0, len(l.rows), width, homePromptHeight, "command-input", 0)
-	l.rows = append(l.rows, homePromptRows(m.commands.query, width, true, mode, submit)...)
+	inputRows := homePromptRows(m.commands.query, width, true, mode, submit)
+	if prompt.height < homePromptHeight {
+		inputRows = []string{inputRows[1], inputRows[homePromptHeight-2], inputRows[homePromptHeight-1]}
+	}
+
+	l.hit(0, len(l.rows), width, len(inputRows), "command-input", 0)
+	l.rows = append(l.rows, inputRows...)
 
 	return l
 }
@@ -391,12 +467,17 @@ func (m model) commandView(view tea.View) tea.View {
 	area := m.commandArea()
 	drawOverlay(width, lines, area, m.commandLayout().rows)
 
+	if m.commands.agent {
+		view.SetContent(strings.Join(lines, "\n"))
+		return view
+	}
+
 	hint := "↑↓ choose · Enter select · Esc close"
 	if m.commands.directory {
 		hint = "↑↓ choose · Tab browse · Enter open · Esc cancel"
 	}
 
-	hint = ansi.Truncate(hint, area.width, "…")
+	hint = compactHint(hint, area.width)
 	drawOverlay(width, lines, hitArea{x: area.x, y: area.y + area.height, width: area.width},
 		[]string{muted(hint) + strings.Repeat(" ", area.width-ansi.StringWidth(hint))})
 	view.SetContent(strings.Join(lines, "\n"))

@@ -211,7 +211,7 @@ func TestAgentReadsRequestsApprovalAndContinues(t *testing.T) {
 			events = append(events, event)
 		},
 	)
-	if err != nil || !approved || len(history) != 7 || len(events) != 3 {
+	if err != nil || !approved || len(history) != 7 || len(events) != 5 {
 		t.Fatalf(
 			"agent turn: approval=%v history=%d events=%d error=%v",
 			approved,

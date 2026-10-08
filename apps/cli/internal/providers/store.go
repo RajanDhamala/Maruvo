@@ -16,6 +16,7 @@ import (
 type Connection struct {
 	Model   string `json:"model"`
 	Storage string `json:"storage"`
+	Options
 }
 
 type Config struct {
@@ -132,6 +133,7 @@ func LoadConfig(profile string) (Config, error) {
 
 	for name, connection := range config.Connections {
 		if !slices.Contains(Names, name) || !validModel(connection.Model) ||
+			connection.Options.Validate(name) != nil ||
 			(connection.Storage != "encrypted" && connection.Storage != "keyring" && connection.Storage != "file") {
 			return config, errors.New("invalid local provider connection")
 		}
@@ -168,7 +170,16 @@ func credentialAccount(profile, provider string) string {
 	return profile + ":" + provider
 }
 
-func SaveConnection(profile, provider, model, secret string) error {
+func SaveConnection(profile, provider, model, secret string, settings ...Options) error {
+	options := Options{}
+	if len(settings) > 0 {
+		options = settings[0]
+	}
+
+	if err := options.Validate(provider); err != nil {
+		return err
+	}
+
 	if _, err := NewClient(provider, model, secret); err != nil {
 		return err
 	}
@@ -197,7 +208,7 @@ func SaveConnection(profile, provider, model, secret string) error {
 	}
 
 	previous := config.Connections[provider]
-	config.Connections[provider] = Connection{Model: model, Storage: "encrypted"}
+	config.Connections[provider] = Connection{Model: model, Storage: "encrypted", Options: options}
 
 	config.Active = provider
 	if err := saveConfig(profile, config); err != nil {
@@ -278,10 +289,15 @@ func ConnectedClient(profile, provider string) (*Client, error) {
 		return nil, err
 	}
 
-	return NewClient(provider, connection.Model, secret)
+	client, err := NewClient(provider, connection.Model, secret)
+	if err == nil {
+		client.options = connection.Options
+	}
+
+	return client, err
 }
 
-func Select(profile, provider, model string) error {
+func Select(profile, provider, model string, settings ...Options) error {
 	if !validModel(model) {
 		return errors.New("choose a model")
 	}
@@ -294,6 +310,16 @@ func Select(profile, provider, model string) error {
 	connection, ok := config.Connections[provider]
 	if !ok {
 		return errors.New("connect this provider first")
+	}
+
+	if len(settings) > 0 {
+		connection.Options = settings[0]
+	} else if connection.Model != model {
+		connection.Options = Options{}
+	}
+
+	if err := connection.Options.Validate(provider); err != nil {
+		return err
 	}
 
 	connection.Model = model

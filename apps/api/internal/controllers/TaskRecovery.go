@@ -129,6 +129,7 @@ func (c *Controller) RecoverPost(w http.ResponseWriter, r *http.Request) {
 
 	if payload.Action == "reopen" {
 		result, err = q.CreatePost(ctx, db.CreatePostParams{
+			TargetWorker: post.TargetWorker,
 			UserID:       post.UserID,
 			Title:        post.Title,
 			CostLamports: post.CostLamports,

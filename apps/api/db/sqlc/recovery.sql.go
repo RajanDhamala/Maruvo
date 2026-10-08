@@ -14,7 +14,7 @@ import (
 const cancelUnfundedPost = `-- name: CancelUnfundedPost :one
 UPDATE posts SET status = 'cancelled', updated_at = NOW()
 WHERE id = $1 AND accepted_by IS NOT NULL AND status = 'negotiating'
-RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds
+RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker
 `
 
 func (q *Queries) CancelUnfundedPost(ctx context.Context, id int64) (Post, error) {
@@ -43,6 +43,7 @@ func (q *Queries) CancelUnfundedPost(ctx context.Context, id int64) (Post, error
 		&i.FundBy,
 		&i.DeliverBy,
 		&i.ReviewWindowSeconds,
+		&i.TargetWorker,
 	)
 	return i, err
 }
@@ -50,7 +51,7 @@ func (q *Queries) CancelUnfundedPost(ctx context.Context, id int64) (Post, error
 const linkReopenedPost = `-- name: LinkReopenedPost :one
 UPDATE posts SET reopened_as = $2, updated_at = NOW()
 WHERE id = $1 AND status = 'cancelled' AND reopened_as IS NULL
-RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds
+RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker
 `
 
 type LinkReopenedPostParams struct {
@@ -84,6 +85,7 @@ func (q *Queries) LinkReopenedPost(ctx context.Context, arg LinkReopenedPostPara
 		&i.FundBy,
 		&i.DeliverBy,
 		&i.ReviewWindowSeconds,
+		&i.TargetWorker,
 	)
 	return i, err
 }

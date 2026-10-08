@@ -22,6 +22,10 @@ func (m model) formView() tea.View {
 		"", "  " + header, "",
 		strings.Repeat(" ", m.contentX()) + muted("‹ Back") + "   " + bold("New task"), "",
 	}
+	if m.form.targetWorker != nil {
+		lines[3] += muted("  → " + plain(m.form.targetName))
+	}
+
 	for y := 0; y < m.bodyHeight(); y++ {
 		row := ""
 		if y < len(l.rows) {
@@ -51,8 +55,8 @@ func (m model) formView() tea.View {
 
 	lines = append(lines,
 		"  "+ansi.Truncate(status, width-4, "…"), "",
-		"  "+muted(ansi.Truncate(help, width-4, "…")),
-		"  "+align(muted(plain(path)), muted("Ctrl+p account"), width-4),
+		"  "+muted(compactHint(help, width-4)),
+		"  "+muted(ansi.Truncate(plain(path), width-4, "…")),
 	)
 	if m.profileOpen {
 		m.drawProfile(lines)

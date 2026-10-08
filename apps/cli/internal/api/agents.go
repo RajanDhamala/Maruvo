@@ -25,6 +25,36 @@ type AgentCredential struct {
 	Grant  AgentGrant `json:"grant"`
 }
 
+type AgentControl struct {
+	PostID        int64      `json:"post_id"`
+	OwnerID       int64      `json:"owner_id"`
+	Mode          string     `json:"mode"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	RevokedGrants int64      `json:"revoked_grants"`
+}
+
+func (c *Client) AgentControl(ctx context.Context, token string, postID int64) (AgentControl, error) {
+	var control AgentControl
+
+	err := c.request(ctx, http.MethodGet, workspacePath(postID)+"/agent-control", token, nil, &control)
+
+	return control, err
+}
+
+func (c *Client) SetAgentControl(
+	ctx context.Context,
+	token string,
+	postID int64,
+	mode string,
+) (AgentControl, error) {
+	var control AgentControl
+
+	err := c.requestJSON(ctx, http.MethodPut, workspacePath(postID)+"/agent-control", token,
+		map[string]string{"mode": mode}, &control)
+
+	return control, err
+}
+
 func (c *Client) CreateAgentGrant(
 	ctx context.Context,
 	token string,

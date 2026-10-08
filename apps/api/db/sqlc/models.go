@@ -100,6 +100,21 @@ func (ns NullPostStatus) Value() (driver.Value, error) {
 	return string(ns.PostStatus), nil
 }
 
+type AgentChat struct {
+	UserID    int64              `json:"user_id"`
+	Profile   string             `json:"profile"`
+	ID        string             `json:"id"`
+	Title     string             `json:"title"`
+	Directory string             `json:"directory"`
+	Provider  string             `json:"provider"`
+	Model     string             `json:"model"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Revision  int64              `json:"revision"`
+	Archived  bool               `json:"archived"`
+	Snapshot  json.RawMessage    `json:"snapshot"`
+}
+
 type AgentGrant struct {
 	ID          pgtype.UUID        `json:"id"`
 	OwnerID     int64              `json:"owner_id"`
@@ -110,6 +125,19 @@ type AgentGrant struct {
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentOffer struct {
+	UserID            int64              `json:"user_id"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	Capabilities      []string           `json:"capabilities"`
+	MinLamports       int64              `json:"min_lamports"`
+	JobTimeoutSeconds int64              `json:"job_timeout_seconds"`
+	LeaseHash         string             `json:"lease_hash"`
+	AvailableUntil    pgtype.Timestamptz `json:"available_until"`
+	Accepting         bool               `json:"accepting"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Post struct {
@@ -135,6 +163,14 @@ type Post struct {
 	FundBy               pgtype.Timestamptz `json:"fund_by"`
 	DeliverBy            pgtype.Timestamptz `json:"deliver_by"`
 	ReviewWindowSeconds  int64              `json:"review_window_seconds"`
+	TargetWorker         pgtype.Int8        `json:"target_worker"`
+}
+
+type PostAgentControl struct {
+	PostID    int64              `json:"post_id"`
+	OwnerID   int64              `json:"owner_id"`
+	Mode      string             `json:"mode"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PostEscrow struct {
@@ -179,6 +215,15 @@ type PostWorkspace struct {
 	ReviewNote        string             `json:"review_note"`
 	DeliveryFiles     []pgtype.UUID      `json:"delivery_files"`
 	ReviewBy          pgtype.Timestamptz `json:"review_by"`
+}
+
+type RemoteActivity struct {
+	PostID      int64              `json:"post_id"`
+	RunID       string             `json:"run_id"`
+	State       string             `json:"state"`
+	Detail      string             `json:"detail"`
+	ActiveUntil pgtype.Timestamptz `json:"active_until"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskDeadlineNotice struct {

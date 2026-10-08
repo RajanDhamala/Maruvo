@@ -39,6 +39,8 @@ type workspaceActionResult struct {
 
 func (m *model) stopWorkspace() {
 	m.workspaceGen++
+
+	m.agentControls.open = false
 	if m.workspaceCancel != nil {
 		m.workspaceCancel()
 	}
@@ -76,7 +78,9 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 	}
 
 	m.loading = false
-	m.setPostError(msg.err)
+	if cmd := m.setPostError(msg.err); cmd != nil {
+		return m, cmd
+	}
 
 	if msg.err != nil {
 		m.live = "Unavailable"
@@ -128,7 +132,11 @@ func (m model) workspaceConnected(msg workspaceConnected) (tea.Model, tea.Cmd) {
 		if errors.As(msg.err, &failure) &&
 			(failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404) {
 			m.stopWorkspace()
-			m.setPostError(msg.err)
+
+			if cmd := m.setPostError(msg.err); cmd != nil {
+				return m, cmd
+			}
+
 			m.live = "Disconnected"
 
 			return m, nil
@@ -168,8 +176,7 @@ func (m model) workspaceFrame(msg workspaceFrame) (tea.Model, tea.Cmd) {
 
 		m.stream = nil
 		if websocket.IsCloseError(msg.err, websocket.ClosePolicyViolation) {
-			m.setPostError(&api.Error{StatusCode: 401, Message: "session expired"})
-			return m, nil
+			return m, m.setPostError(&api.Error{StatusCode: 401, Message: "session expired"})
 		}
 
 		m.live = "Reconnecting..."
@@ -227,6 +234,7 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		SHA256            string     `json:"sha256"`
 		Status            string     `json:"status"`
 		State             string     `json:"state"`
+		Detail            string     `json:"detail"`
 		Signature         string     `json:"signature"`
 		Note              string     `json:"note"`
 		SubmittedAt       *time.Time `json:"submitted_at"`
@@ -244,6 +252,20 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 	}
 
 	switch event.Kind {
+	case "agent.control":
+		var control api.AgentControl
+		if json.Unmarshal(event.Data, &control) == nil && control.OwnerID == parseUser(m.user.ID) &&
+			!newerAgentControl(m.workspace.AgentControl, control) {
+			m.workspace.AgentControl = control
+			if m.agentControls.open {
+				m.agentControls.control = control
+			}
+		}
+	case "agent.activity":
+		m.workspace.Post.Remote.Status = data.State
+		m.workspace.Post.Remote.Detail = data.Detail
+		m.workspace.Post.Remote.WorkerSeen = &event.CreatedAt
+		m.workspace.Post.Remote.WorkerOnline = data.State != "failed" && data.State != "interrupted"
 	case "file.shared":
 		for _, file := range m.workspace.Files {
 			if file.ID == data.ID {
@@ -320,6 +342,19 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		}
 	}
 
+	switch {
+	case m.workspace.Post.Status == "completed":
+		m.workspace.Post.Remote.Status = "completed"
+	case m.workspace.Post.Status == "cancelled":
+		m.workspace.Post.Remote.Status = "cancelled"
+	case m.workspace.Escrow.State == "refunded":
+		m.workspace.Post.Remote.Status = "refunded"
+	case m.workspace.State.ReviewState == "submitted":
+		m.workspace.Post.Remote.Status = "waiting_for_review"
+	case m.workspace.Escrow.State != "confirmed":
+		m.workspace.Post.Remote.Status = "waiting_for_funding"
+	}
+
 	if (m.workspaceAction == "a" || m.workspaceAction == "x" || m.workspaceAction == "e") &&
 		!m.reviewIsCurrent() {
 		m.workspaceAction, m.workspaceInput, m.reviewConfirm = "", textField{}, false
@@ -368,6 +403,8 @@ func (m model) updateWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "workspace-control":
+		return m.openAgentControls()
 	case "q":
 		m.stopWorkspace()
 		return m, tea.Quit
@@ -511,6 +548,10 @@ func (m model) workspaceLayout() postLayout {
 	}
 
 	l.rows = append(l.rows, muted("Delivery: "+strings.ReplaceAll(m.workspace.State.ReviewState, "_", " ")))
+	if post.Remote.Status != "" {
+		l.rows = append(l.rows, muted(remoteLabel(post)))
+	}
+
 	if m.workspace.Settlement.State != "" {
 		l.rows = append(
 			l.rows,
@@ -648,16 +689,39 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 	}
 
 	var data struct {
-		Text   string `json:"text"`
-		Name   string `json:"name"`
-		Note   string `json:"note"`
-		State  string `json:"state"`
-		Status string `json:"status"`
-		Stage  string `json:"stage"`
+		Text      string `json:"text"`
+		Name      string `json:"name"`
+		Note      string `json:"note"`
+		State     string `json:"state"`
+		Status    string `json:"status"`
+		Stage     string `json:"stage"`
+		AgentName string `json:"agent_name"`
 	}
 
 	_ = json.Unmarshal(event.Data, &data)
+	if data.AgentName != "" {
+		actor += " · agent " + plain(data.AgentName)
+	}
+
 	switch event.Kind {
+	case "agent.control":
+		var control api.AgentControl
+
+		_ = json.Unmarshal(event.Data, &control)
+
+		if control.Mode == "manual" {
+			return actor + " took manual control; their task agent access is paused."
+		}
+
+		return actor + " allowed agent access for this task."
+	case "agent.activity":
+		var activity struct {
+			Detail string `json:"detail"`
+		}
+
+		_ = json.Unmarshal(event.Data, &activity)
+
+		return "Remote agent: " + strings.ReplaceAll(data.State, "_", " ") + " · " + plain(activity.Detail)
 	case "task.overdue":
 		if data.Stage == "fund" {
 			return "Funding deadline passed. The requester can cancel/reopen once active funding expires."

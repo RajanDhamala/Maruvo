@@ -34,19 +34,25 @@ func (m model) openPosts(own bool) (tea.Model, tea.Cmd) {
 	return m, m.fetchDashboard()
 }
 
-func (m *model) setPostError(err error) {
+type sessionChecked struct {
+	token string
+	err   error
+}
+
+func (m *model) setPostError(err error) tea.Cmd {
 	m.err = err
 
 	var apiError *api.Error
 	if errors.As(err, &apiError) && apiError.StatusCode == http.StatusUnauthorized {
-		m.stopWorkspace()
-		m.token, m.user, m.posts = "", api.User{}, nil
-		m.walletAddress = ""
-		m.clearDashboard()
-		m.profileOpen = false
-		m.picker.open = false
-		m.err = errors.New("Your session expired. Sign in again.")
+		token, client, ctx := m.token, m.client, m.ctx
+
+		return func() tea.Msg {
+			_, checkErr := client.Me(ctx, token)
+			return sessionChecked{token: token, err: checkErr}
+		}
 	}
+
+	return nil
 }
 
 func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -236,4 +242,9 @@ func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func unauthorized(err error) bool {
+	var failure *api.Error
+	return errors.As(err, &failure) && failure.StatusCode == http.StatusUnauthorized
 }

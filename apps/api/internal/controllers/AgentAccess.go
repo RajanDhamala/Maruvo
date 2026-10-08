@@ -86,7 +86,7 @@ func agentRequestAllowed(grant utils.AgentAccess, r *http.Request) bool {
 		"GET /ws/files",
 		"POST /posts/info":
 		permission = "read"
-	case "POST /posts/{id}/messages":
+	case "POST /posts/{id}/messages", "POST /posts/{id}/activity":
 		permission = "message"
 	case "POST /posts/{id}/files":
 		permission = "upload"
@@ -281,8 +281,9 @@ func (c *Controller) CreateAgentGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if post.Status == db.PostStatusCompleted || post.Status == db.PostStatusCancelled {
-		postJSON(w, 409, map[string]string{"error": "cannot issue access for a closed task"})
+	if (post.Status == db.PostStatusCompleted || post.Status == db.PostStatusCancelled) &&
+		(len(permissions) != 1 || permissions[0] != "read") {
+		postJSON(w, 409, map[string]string{"error": "closed tasks allow read-only agent access"})
 		return
 	}
 
@@ -307,6 +308,33 @@ func (c *Controller) CreateAgentGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tx, err := c.pool.Begin(r.Context())
+	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	q := db.New(tx)
+
+	control, err := lockAgentControl(r.Context(), q, postID, ownerID)
+	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+
+	if control.Mode == "manual" {
+		postJSON(
+			w,
+			409,
+			map[string]string{
+				"error": "agent access is paused for this task; switch to agent mode to resume",
+			},
+		)
+
+		return
+	}
+
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		workspaceError(w, err)
@@ -315,7 +343,7 @@ func (c *Controller) CreateAgentGrant(w http.ResponseWriter, r *http.Request) {
 
 	token := agentTokenPrefix + base64.RawURLEncoding.EncodeToString(secret)
 
-	grant, err := c.queries.CreateAgentGrant(r.Context(), db.CreateAgentGrantParams{
+	grant, err := q.CreateAgentGrant(r.Context(), db.CreateAgentGrantParams{
 		ID:          pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		OwnerID:     ownerID,
 		PostID:      postID,
@@ -328,6 +356,11 @@ func (c *Controller) CreateAgentGrant(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+
+	if err = tx.Commit(r.Context()); err != nil {
 		workspaceError(w, err)
 		return
 	}

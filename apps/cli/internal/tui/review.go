@@ -59,7 +59,9 @@ func (m model) reviewPrepared(msg reviewPrepared) (tea.Model, tea.Cmd) {
 	}
 
 	m.loading = false
-	m.setPostError(msg.err)
+	if cmd := m.setPostError(msg.err); cmd != nil {
+		return m, cmd
+	}
 
 	if msg.err == nil {
 		if !m.reviewIsCurrent() || msg.plan.Settlement.SubmissionVersion != m.reviewVersion {

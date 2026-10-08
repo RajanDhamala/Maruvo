@@ -220,6 +220,8 @@ func TestComposerFitsTerminalAndStaysAtBottom(t *testing.T) {
 	for _, size := range [][2]int{{48, 16}, {80, 24}, {110, 38}, {180, 50}} {
 		m := chatModel()
 		m.width, m.height = size[0], size[1]
+		m.workspace.AgentControl.Mode = "manual"
+		m.workspace.Post.Remote.Status = "working"
 		m.composer.attachments = []localFile{{path: "report final.txt"}}
 		m.composer.draft = textField{value: strings.Repeat("long draft ", 30), cursor: 330, limit: 4000}
 		m.composer.completing, m.composer.suggestions = true, []localFile{{label: "src/report.txt"}}
