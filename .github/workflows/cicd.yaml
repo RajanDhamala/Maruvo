@@ -1,9 +1,9 @@
 name: Build checks
 
 on:
-  push:
   pull_request:
-  workflow_dispatch:
+    branches: [main]
+    types: [closed]
 
 permissions:
   contents: read
@@ -14,10 +14,13 @@ concurrency:
 
 jobs:
   build:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/cli/go.mod
