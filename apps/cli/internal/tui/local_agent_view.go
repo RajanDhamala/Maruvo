@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -52,14 +53,19 @@ func (m model) localAgentLayout() postLayout {
 	pickerRows, pickerHits := m.agentFileRows(inner, max(1, statusY-4))
 	pickerY := statusY - len(pickerRows)
 	visible := max(1, pickerY-3)
-	transcript := m.localAgentTranscript(min(100, inner))
+	transcript := m.localAgentTranscript(inner)
 	end := len(transcript) - min(a.scroll, max(0, len(transcript)-visible))
 	start := max(0, end-visible)
 	copy(rows[3:pickerY], transcript[start:end])
 	copy(rows[pickerY:statusY], pickerRows)
 
-	status := muted("File edits ask for approval.")
+	status := muted("Permissions: " + permissionModes[m.permissionMode()].name + " · /permissions")
+	if m.hasFullAccess() {
+		status = warning("Permissions: full access · /permissions")
+	}
 	switch {
+	case errors.Is(a.err, providers.ErrToolBatchPaused):
+		status = accent("Tool batch paused · progress retained · Continue to resume")
 	case a.err != nil:
 		status = warning(plain(a.err.Error()))
 	case a.storageErr != nil:
@@ -93,6 +99,9 @@ func (m model) localAgentLayout() postLayout {
 	}
 
 	placeholder, submit, meta := "Ask the agent… · @ files · / commands", " Enter send ", "@ files · / commands"
+	if !a.busy && errors.Is(a.err, providers.ErrToolBatchPaused) {
+		placeholder, submit = "Progress saved. Continue the agent or add an instruction…", " Continue "
+	}
 	if a.busy {
 		placeholder, submit = "Model responding… Esc stops the request.", " Working… "
 		meta = "Input locked · Esc stop"
@@ -222,7 +231,11 @@ func (m model) localAgentTranscript(width int) []string {
 	}
 
 	if approval := m.localAgent.approval; approval != nil {
-		rows = append(rows, accent("Proposed file: "+plain(approval.Path)))
+		label := "Proposed file: "
+		if approval.Action == "Run command" {
+			label = "Run command in: "
+		}
+		rows = append(rows, accent(label+plain(approval.Path)))
 		rows = append(rows, strings.Split(ansi.Wrap(ansi.Strip(approval.Content), width, ""), "\n")...)
 	}
 

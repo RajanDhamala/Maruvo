@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Maruvo · Wallet</title>
+<style nonce="{{.Nonce}}">
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0a0a0a;color:#eee}body{margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:440px;margin:24px;padding:28px;border:1px solid #333;border-radius:12px}small{color:#22d3ee}h1{font-size:24px}p{color:#aaa;line-height:1.6}button{padding:12px 18px;margin:6px 8px 6px 0;border:1px solid #444;border-radius:8px;background:#202020;color:#eee;cursor:pointer}button:disabled{opacity:.5;cursor:wait}a{color:#22d3ee}#status{white-space:pre-wrap;overflow-wrap:anywhere}#cancel{background:transparent}
+</style></head><body><main><small>MARUVO · DEVNET TEST WALLET</small><h1 id="title">Connect your wallet</h1><p id="description">Choose your browser wallet, approve the connection, then sign a message to verify ownership. Connecting does not transfer funds.</p><div><button data-wallet="Phantom">Phantom</button><button data-wallet="Solflare">Solflare</button></div><p id="status" role="status" aria-live="polite">Keep this page open until the connection finishes.</p><button id="cancel">Cancel</button><p>Need an extension? <a href="https://phantom.com/" target="_blank" rel="noopener noreferrer">Phantom</a> · <a href="https://solflare.com/" target="_blank" rel="noopener noreferrer">Solflare</a></p></main>
+<script nonce="{{.Nonce}}">
+const operation={{.Operation}},expectedAddress={{.Address}},transaction={{.Transaction}},csrf={{.CSRF}};
+const wallets=new Set(),status=document.querySelector('#status'),buttons=[...document.querySelectorAll('[data-wallet]')];
+const registry={register(...items){items.forEach(wallet=>wallets.add(wallet));return()=>items.forEach(wallet=>wallets.delete(wallet));}};
+window.addEventListener('wallet-standard:register-wallet',event=>event.detail(registry));
+window.dispatchEvent(new CustomEvent('wallet-standard:app-ready',{detail:registry}));
+const encode=bytes=>btoa(String.fromCharCode(...bytes));
+const decode=text=>Uint8Array.from(atob(text),char=>char.charCodeAt(0));
+async function request(path,payload={}){
+ const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Maruvo-CSRF':csrf},body:JSON.stringify(payload),credentials:'omit'});
+ if(response.status===204)return;
+ const data=await response.json();if(!response.ok)throw new Error(data.error||'Wallet request failed.');return data.value;
+}
+if(operation==='sign'){
+ document.querySelector('#title').textContent='Approve this Devnet transaction';
+ document.querySelector('#description').textContent='Use the wallet linked to your account: '+expectedAddress+'. Review the transaction in your wallet before approving. This uses test SOL.';
+}
+buttons.forEach(button=>button.addEventListener('click',async()=>{
+ buttons.forEach(item=>item.disabled=true);
+ try{
+  const wallet=[...wallets].find(item=>item.name.toLowerCase()===button.dataset.wallet.toLowerCase());
+  if(!wallet)throw new Error('Install or unlock '+button.dataset.wallet+' in this browser, then reload this page.');
+  status.textContent='Approve the connection in '+wallet.name+'…';
+  const {accounts}=await wallet.features['standard:connect'].connect();
+  const account=accounts.find(item=>operation!=='sign'||item.address===expectedAddress);
+  if(!account)throw new Error('Select the wallet linked to your Maruvo account.');
+  if(operation==='connect'){
+   const feature=wallet.features['solana:signMessage'];if(!feature)throw new Error('This wallet cannot verify ownership. Update your extension.');
+   const message=await request('/challenge',{address:account.address});
+   status.textContent='Sign the ownership message in '+wallet.name+'…';
+   const [signed]=await feature.signMessage({account,message:new TextEncoder().encode(message)});
+   await request('/complete',{address:account.address,signature:encode(signed.signature)});
+  }else{
+   const feature=wallet.features['solana:signTransaction'];if(!feature)throw new Error('This wallet cannot sign transactions. Update your extension.');
+   if(!account.chains.includes('solana:devnet'))throw new Error('Enable Devnet in your wallet.');
+   status.textContent='Review and approve the Devnet transaction in '+wallet.name+'…';
+   const [signed]=await feature.signTransaction({account,chain:'solana:devnet',transaction:decode(transaction)});
+   await request('/complete',{address:account.address,transaction:encode(signed.signedTransaction)});
+  }
+  status.textContent='Approved. Return to Maruvo in your terminal.';
+  document.querySelector('#cancel').hidden=true;
+ }catch(error){status.textContent=error.message||'Wallet request declined. You can retry or cancel.';buttons.forEach(item=>item.disabled=false);}
+}));
+document.querySelector('#cancel').addEventListener('click',async()=>{
+ try{await request('/cancel');status.textContent='Cancelled. Return to your terminal.';buttons.forEach(item=>item.disabled=true);}catch(error){status.textContent='This request has ended. Return to your terminal.';}
+});
+</script></body></html>

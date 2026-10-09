@@ -33,6 +33,7 @@ type remoteStatusLoaded struct {
 	cursor     string
 	post       api.Post
 	err        error
+	presence   *api.WorkspacePresence
 }
 
 func remoteTick() tea.Cmd {
@@ -61,7 +62,12 @@ func (m model) fetchRemote() tea.Cmd {
 func (m model) refreshRemoteStatus() tea.Cmd {
 	return func() tea.Msg {
 		info, err := m.client.PostInfo(m.workspaceCtx, m.token, m.workspace.Post.ID)
-		return remoteStatusLoaded{m.workspaceGen, m.workspace.Cursor, info.Post, err}
+		presence, presenceErr := m.client.WorkspacePresence(m.workspaceCtx, m.token, m.workspace.Post.ID)
+		result := remoteStatusLoaded{generation: m.workspaceGen, cursor: m.workspace.Cursor, post: info.Post, err: err}
+		if presenceErr == nil {
+			result.presence = &presence
+		}
+		return result
 	}
 }
 func (m model) remoteCount() int {

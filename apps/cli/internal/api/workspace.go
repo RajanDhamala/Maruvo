@@ -226,7 +226,11 @@ func (c *Client) ConnectWorkspace(
 	id, after int64,
 	cursor ...string,
 ) (*WorkspaceStream, error) {
-	u, err := url.Parse(c.baseURL + "/ws")
+	path := "/ws"
+	if id == 0 {
+		path = "/ws/work-invites"
+	}
+	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return nil, err
 	}

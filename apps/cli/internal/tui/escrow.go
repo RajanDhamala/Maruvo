@@ -1,22 +1,31 @@
 package tui
 
 import (
+	"context"
 	"errors"
+	"os"
 	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
+	"github.com/rajandhamala/Maruvo/cli/internal/auth"
 	"github.com/rajandhamala/Maruvo/cli/internal/wallet"
 )
 
 type walletResult struct {
 	address string
 	err     error
+	browser bool
 }
 type escrowResult struct {
 	info               api.PostInfo
 	confirm, submitted bool
 	err                error
+}
+
+type agentFundingLoaded struct {
+	info api.PostInfo
+	err  error
 }
 
 func (m model) isPoster(post api.Post) bool { return strconv.FormatInt(post.UserID, 10) == m.user.ID }
@@ -27,6 +36,10 @@ func (m model) isWorker(post api.Post) bool {
 
 func (m model) connectWallet() tea.Cmd {
 	return func() tea.Msg {
+		if os.Getenv("MARUVO_WALLET") == "browser" {
+			address, err := wallet.ConnectBrowser(m.ctx, m.client, m.token)
+			return walletResult{address: address, err: err}
+		}
 		key, err := wallet.Load()
 		if err != nil {
 			return walletResult{err: err}
@@ -36,6 +49,40 @@ func (m model) connectWallet() tea.Cmd {
 
 		return walletResult{address: key.Address(), err: err}
 	}
+}
+
+func (m model) connectBrowserWallet() tea.Cmd {
+	return func() tea.Msg {
+		address, err := wallet.ConnectBrowser(m.ctx, m.client, m.token)
+		if err == nil {
+			err = auth.SaveWallet(m.profile, "browser")
+		}
+		return walletResult{address: address, err: err, browser: true}
+	}
+}
+
+func (m model) loadWallet(ctx context.Context) (*wallet.Wallet, error) {
+	if os.Getenv("MARUVO_WALLET") != "browser" {
+		key, err := wallet.Load()
+		if err != nil {
+			return nil, err
+		}
+		if err := m.linkWallet(key); err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+	address, err := m.client.Wallet(ctx, m.token)
+	if err != nil {
+		return nil, err
+	}
+	if address == "" {
+		address, err = wallet.ConnectBrowser(ctx, m.client, m.token)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return wallet.Browser(ctx, address)
 }
 
 func (m model) linkWallet(key *wallet.Wallet) error {
@@ -62,12 +109,8 @@ func (m model) linkWallet(key *wallet.Wallet) error {
 
 func (m model) acceptPost(post api.Post) tea.Cmd {
 	return func() tea.Msg {
-		key, err := wallet.Load()
+		_, err := m.loadWallet(m.ctx)
 		if err != nil {
-			return postChanged{err: err}
-		}
-
-		if err = m.linkWallet(key); err != nil {
 			return postChanged{err: err}
 		}
 
@@ -90,12 +133,8 @@ func (m model) prepareFunding() tea.Cmd {
 	post := m.posts[m.selected]
 
 	return func() tea.Msg {
-		key, err := wallet.Load()
+		_, err := m.loadWallet(m.ctx)
 		if err != nil {
-			return escrowResult{err: err}
-		}
-
-		if err = m.linkWallet(key); err != nil {
 			return escrowResult{err: err}
 		}
 
@@ -109,7 +148,7 @@ func (m model) submitFunding() tea.Cmd {
 	post, plan := m.posts[m.selected], m.escrow
 
 	return func() tea.Msg {
-		key, err := wallet.Load()
+		key, err := m.loadWallet(m.ctx)
 		if err != nil {
 			return escrowResult{err: err}
 		}

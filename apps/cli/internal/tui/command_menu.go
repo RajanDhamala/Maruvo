@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,6 +22,18 @@ var slashCommands = []struct {
 	{"/remote", "Remote agents / queued work / harness setup"},
 	{"/priority", "Priority · coming soon"},
 	{"/new", "New task · coming soon"},
+	{"/connect", "Connect an AI provider"},
+	{"/files", "Shared workspace files"},
+	{"/attach", "Attach a local file"},
+	{"/review", "Review delivery"},
+	{"/task", "Task details"},
+	{"/submit", "Submit delivery"},
+	{"/refresh", "Refresh task status"},
+	{"/wallet", "Connect Phantom / Solflare wallet"},
+	{"/work", "Invite the other participant to work together"},
+	{"/stop-work", "Stop task agent"},
+	{"/permissions", "Local agent permissions"},
+	{"/allow", "Control local agent permissions"},
 }
 
 type commandMenu struct {
@@ -58,6 +71,9 @@ func (m model) canOpenCommands() bool {
 	if m.demo || m.loading || m.profileOpen || m.picker.open || m.dashboard.filterOpen {
 		return false
 	}
+	if m.composing() {
+		return m.composer.draft.value == "" && !m.composer.completing
+	}
 
 	if m.token == "" {
 		return m.homeFocus != homePrompt || m.homeInput.value == ""
@@ -70,20 +86,39 @@ func (m model) canOpenCommands() bool {
 func (m model) openCommands() model {
 	m.commands = commandMenu{
 		open:     true,
-		query:    textField{value: "/", cursor: 1, limit: 100},
+		query:    textField{value: "/", cursor: 1, limit: 12000, byteLimit: 12000},
 		sequence: m.commands.sequence + 1,
 	}
 
 	return m
 }
 
+func commandParts(value string) (name, argument string, complete bool) {
+	value = strings.TrimLeftFunc(value, unicode.IsSpace)
+	if at := strings.IndexFunc(value, unicode.IsSpace); at >= 0 {
+		return strings.ToLower(value[:at]), strings.TrimSpace(value[at:]), true
+	}
+	return strings.ToLower(value), "", false
+}
+
 func (m model) commandIndices() []int {
-	query := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(m.commands.query.value), "/"))
+	name, _, complete := commandParts(m.commands.query.value)
+	query := strings.TrimPrefix(name, "/")
 
 	var indices []int
 
 	for i, command := range slashCommands {
-		if strings.Contains(strings.ToLower(command.name+" "+command.label), query) {
+		switch command.name {
+		case "/work", "/stop-work":
+			if m.screen != workspaceScreen {
+				continue
+			}
+		case "/files", "/attach", "/review", "/task", "/submit", "/refresh":
+			if m.screen != workspaceScreen || m.commands.agent {
+				continue
+			}
+		}
+		if (complete && command.name == name) || (!complete && strings.Contains(strings.ToLower(command.name+" "+command.label), query)) {
 			indices = append(indices, i)
 		}
 	}
@@ -92,6 +127,69 @@ func (m model) commandIndices() []int {
 }
 
 func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
+	name := slashCommands[index].name
+	_, argument, complete := commandParts(m.commands.query.value)
+	if complete && argument != "" && name != "/agent" && name != "/work" && name != "/open" {
+		m.commands.err = errors.New(name + " does not take arguments.")
+		return m, nil
+	}
+	if m.screen == workspaceScreen && name == "/agent" && (!m.commands.agent || argument != "") {
+		m.commands.open = false
+		return m.startWorkAgent(argument)
+	}
+	if m.screen == workspaceScreen && name == "/work" {
+		m.commands.open = false
+		return m.openWorkSetup(argument)
+	}
+	if name == "/permissions" || name == "/allow" {
+		return m.openPermissions()
+	}
+	if m.workAgent.active {
+		switch slashCommands[index].name {
+		case "/agent", "/sessions", "/new", "/open", "/model", "/connect", "/remote":
+			m.commands.err = errors.New("Use /stop-work before changing the task agent's chat, folder or model.")
+			return m, nil
+		}
+	}
+	if slashCommands[index].name == "/stop-work" {
+		m.commands.open = false
+		m.stopWorkAgent("Task agent stopped.")
+		return m, m.saveLocalConversation()
+	}
+	if slashCommands[index].name == "/work" {
+		m.commands.open = false
+		return m.openWorkSetup("")
+	}
+	if slashCommands[index].name == "/wallet" {
+		if m.token == "" {
+			m.commands.err = errors.New("Sign in before connecting your wallet.")
+			return m, nil
+		}
+		m.commands.open, m.loading, m.err = false, true, nil
+		m.notice = "Choose Phantom or Solflare in your browser."
+		return m, m.connectBrowserWallet()
+	}
+	if m.screen == workspaceScreen && !m.commands.agent {
+		actions := map[string]string{"/files": "tab", "/review": "v", "/task": "b", "/submit": "s", "/refresh": "r"}
+		name := slashCommands[index].name
+		if action, ok := actions[name]; ok {
+			m.commands.open = false
+			return m.workspaceCommand(action)
+		}
+		if name == "/attach" {
+			m.commands.open = false
+			return m.startAttachment()
+		}
+		if name == "/new" {
+			if m.localAgent.busy {
+				m.commands.err = errors.New("Wait for the current agent response before starting a new chat.")
+				return m, nil
+			}
+			next, save := m.newLocalConversation()
+			next, ready := next.(model).openLocalAgent()
+			return next, tea.Batch(save, ready)
+		}
+	}
 	if m.commands.agent {
 		if m.localAgent.busy {
 			return m, nil
@@ -100,6 +198,11 @@ func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
 		switch slashCommands[index].name {
 		case "/agent":
 			m.commands.open = false
+			if argument != "" {
+				m.localAgent.input = textField{limit: 12000, byteLimit: 16000, multiline: true}
+				m.localAgent.input.insert(argument)
+				return m.sendLocalPrompt()
+			}
 			return m, nil
 		case "/sessions":
 			m.commands.open = false
@@ -114,12 +217,19 @@ func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
 		return m.openRemote()
 	}
 
-	if slashCommands[index].name == "/model" {
+	if slashCommands[index].name == "/model" || slashCommands[index].name == "/connect" {
 		return m.openProviders()
 	}
 
 	if slashCommands[index].name == "/agent" {
-		return m.openLocalAgent()
+		next, ready := m.openLocalAgent()
+		m = next.(model)
+		if argument != "" {
+			m.localAgent.input = textField{limit: 12000, byteLimit: 16000, multiline: true}
+			m.localAgent.input.insert(argument)
+			m.localAgent.autoSend = true
+		}
+		return m, ready
 	}
 
 	if slashCommands[index].name == "/sessions" {
@@ -144,6 +254,11 @@ func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
 	m.commands.directory = true
 	m.commands.root = path
 	m.commands.query = textField{value: path, cursor: utf8.RuneCountInString(path), limit: 4096}
+	if argument != "" {
+		m.commands.query.value, m.commands.query.cursor = argument, utf8.RuneCountInString(argument)
+		m.commands.selection = -1
+		return m.openDirectory()
+	}
 
 	return m, m.findDirectories()
 }
@@ -277,6 +392,7 @@ func (m model) updateCommands(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if len(indices) > 0 {
 			return m.chooseCommand(indices[min(m.commands.selection, len(indices)-1)])
 		}
+		m.commands.err = errors.New("Unknown command. Use /agent <instruction> or /work in a task workspace.")
 	case "tab":
 		if m.commands.directory {
 			return m.browseDirectory(max(0, m.commands.selection))
@@ -305,6 +421,10 @@ func (m model) updateCommandQuery() (tea.Model, tea.Cmd) {
 			m.localAgent.input = m.commands.query
 			return m, m.completeAgentInput()
 		}
+		if m.screen == workspaceScreen {
+			m.composer.draft.insert(m.commands.query.value)
+			return m, m.completeFiles()
+		}
 
 		if m.commands.query.value != "" {
 			m.homeInput.value, m.homeInput.cursor = m.commands.query.value, m.commands.query.cursor
@@ -319,6 +439,13 @@ func (m model) updateCommandQuery() (tea.Model, tea.Cmd) {
 
 func (m model) commandPromptArea() hitArea {
 	width, height := m.dimensions()
+	if m.screen == workspaceScreen && !m.commands.agent {
+		promptHeight := homePromptHeight
+		if m.bodyHeight() < 12 {
+			promptHeight = 3
+		}
+		return hitArea{x: m.contentX(), y: height - 4 - promptHeight, width: m.contentWidth(), height: promptHeight}
+	}
 	if m.commands.agent {
 		inputHeight := 5
 		if height < 22 {
@@ -406,7 +533,10 @@ func (m model) commandLayout() postLayout {
 			i := indices[row]
 
 			command := slashCommands[i]
-			if m.commands.agent && command.name == "/new" {
+			if m.screen == workspaceScreen && command.name == "/agent" {
+				command.label = "Your agent · /agent <instruction>"
+			}
+			if (m.commands.agent || m.screen == workspaceScreen) && command.name == "/new" {
 				command.label = "Start a new chat"
 			}
 

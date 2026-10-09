@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"errors"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +14,54 @@ import (
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case inviteConnected:
+		if msg.generation != m.invitations.generation {
+			msg.stream.Close()
+			return m, nil
+		}
+		if msg.err != nil {
+			return m, m.inviteRetry()
+		}
+		m.invitations.stream = msg.stream
+		return m, m.readInvite()
+	case inviteRetry:
+		if msg.generation == m.invitations.generation && m.token != "" {
+			return m, m.connectInvites()
+		}
+		return m, nil
+	case inviteFrame:
+		return m.receiveInvite(msg)
+	case inviteWorkspace:
+		if msg.generation != m.invitations.generation {
+			return m, nil
+		}
+		m.invitations.busy = false
+		if m.invitations.pending == nil || m.invitations.pending.Nonce != msg.invitation.Nonce {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.notice = msg.err.Error()
+			return m, nil
+		}
+		if msg.info.Post.AcceptedBy == nil || (!m.isPoster(msg.info.Post) && !m.isWorker(msg.info.Post)) {
+			m.notice = "You no longer participate in this task."
+			return m, nil
+		}
+		m.invitations.pending = nil
+		m.invitations.accepted = &msg.invitation
+		m.providers.open, m.remote.open, m.commands.open, m.localAgent.open = false, false, false, false
+		m.permissions.open, m.profileOpen, m.picker.open, m.agentControls.open, m.shortcutsOpen = false, false, false, false, false
+		m.posts, m.selected = []api.Post{msg.info.Post}, 0
+		return m.openWorkspace("work-invite")
+
+	case workSetupResult:
+		return m.workSetupResult(msg)
+	case workSetupTick:
+		if msg.generation == m.workSetup.generation && (m.workSetup.open || m.workSetup.armed) && !m.workSetup.busy {
+			m.workSetup.busy = true
+			return m, m.refreshWorkSetup()
+		}
+		return m, nil
 	case agentControlsLoaded:
 		return m.agentControlsLoaded(msg)
 	case remoteClock:
@@ -36,6 +86,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 	case remoteStatusLoaded:
+		if msg.generation == m.workspaceGen && m.screen == workspaceScreen {
+			m.presence = msg.presence
+		}
 		if msg.generation == m.workspaceGen && m.screen == workspaceScreen && msg.err == nil &&
 			msg.post.ID == m.workspace.Post.ID && !api.StreamCursorAfter(m.workspace.Cursor, msg.cursor) {
 			m.workspace.Post.Remote = msg.post.Remote
@@ -60,6 +113,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.MouseClickMsg:
+		if m.invitations.pending != nil || m.permissions.open || (m.localAgent.open && m.localAgent.approval != nil) {
+			return m, nil
+		}
 		if m.agentControls.open {
 			return m, nil
 		}
@@ -81,7 +137,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCommandMouse(msg)
 		}
 
-		if m.localAgent.open {
+		if m.localAgentVisible() {
 			return m.updateLocalAgentMouse(msg)
 		}
 
@@ -152,7 +208,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.localAgent.open {
+		if m.localAgentVisible() {
 			if m.localAgent.files.open {
 				if msg.Button == tea.MouseWheelUp {
 					return m.updateLocalAgent(tea.KeyPressMsg{Code: tea.KeyUp})
@@ -188,6 +244,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m.updateWheel(msg)
 	case tea.PasteMsg:
+		if m.localAgent.approval != nil {
+			if m.localAgent.approvalEditing && !m.permissions.open {
+				m.localAgent.approvalInput.insert(msg.Content)
+			}
+			return m, nil
+		}
 		if m.agentControls.open {
 			return m, nil
 		}
@@ -216,7 +278,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCommandQuery()
 		}
 
-		if m.localAgent.open {
+		if m.localAgentVisible() {
 			if m.localAgent.sessions.open && !m.localAgent.sessions.busy {
 				m.localAgent.sessions.query.insert(msg.Content)
 				m.localAgent.sessions.selection = 0
@@ -284,6 +346,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.stopWorkspace()
+			m.stopInvites()
 
 			return m, tea.Sequence(m.saveLocalConversation(), tea.Quit)
 		}
@@ -297,6 +360,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.invitations.pending != nil {
+			return m.updateInvite(msg)
+		}
 		if m.agentControls.open {
 			return m.updateAgentControls(msg)
 		}
@@ -310,6 +376,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.remote.open {
 			return m.updateRemote(msg)
 		}
+		if m.permissions.open {
+			return m.updatePermissions(msg)
+		}
+		if m.workSetup.open {
+			return m.updateWorkSetup(msg)
+		}
 
 		if m.providers.open {
 			return m.updateProviders(msg)
@@ -319,7 +391,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCommands(msg)
 		}
 
-		if m.localAgent.open {
+		if m.localAgentVisible() {
 			return m.updateLocalAgent(msg)
 		}
 
@@ -367,6 +439,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commands.open && m.commands.directory && msg.sequence == m.commands.sequence {
 			m.commands.folders, m.commands.err, m.commands.searching = msg.folders, msg.err, false
 		}
+	case startupProviderLoaded:
+		if msg.sequence != m.providers.sequence || m.providers.open {
+			return m, nil
+		}
+		if msg.err != nil || len(msg.config.Connections) == 0 {
+			m.providers = providerSettings{
+				open: true, sequence: m.providers.sequence + 1,
+				key: textField{limit: 4096}, query: textField{limit: 200},
+				config: msg.config, err: msg.err,
+			}
+		}
+		return m, nil
 	case providerConfigLoaded:
 		if m.providers.open && msg.sequence == m.providers.sequence {
 			m.providers.busy, m.providers.config, m.providers.err = false, msg.config, msg.err
@@ -413,11 +497,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice = "Provider disconnected; its saved credential was removed."
 				}
 
-				if m.localAgent.open {
+				if m.localAgentVisible() {
 					return m.openLocalAgent()
 				}
 			}
 		}
+	case workspaceAgentTick:
+		return m.advanceWorkAgent(msg)
 	case localAgentReady:
 		if m.localAgent.open && msg.sequence == m.localAgent.sequence {
 			m.localAgent.busy, m.localAgent.client, m.localAgent.label, m.localAgent.err = false, msg.client, msg.label, msg.err
@@ -447,7 +533,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.localAgent.chat.Pending = msg.err != nil
 
 			m.localAgent.approval, m.localAgent.answer = nil, nil
-			if msg.err == nil {
+			if msg.err == nil || errors.Is(msg.err, providers.ErrToolBatchPaused) {
 				m.localAgent.history = msg.history
 			} else if m.localAgent.chat.ID != "" {
 				m.localAgent.history = providers.ConversationHistory(m.localAgent.chat)
@@ -456,6 +542,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.localAgent.cancel != nil {
 				m.localAgent.cancel()
 			}
+
+			if m.workAgent.active {
+				if errors.Is(msg.err, providers.ErrToolBatchPaused) {
+					m.workAgent.paused = true
+					m.workAgent.status = "Paused · Continue in agent chat"
+				} else if msg.err != nil {
+					m.stopWorkAgent("Task agent paused: " + msg.err.Error())
+				} else {
+					m.localAgent.open = false
+					m.workAgent.status = "Listening for task updates"
+				}
+				return m, m.saveLocalConversation()
+			}
+
+			if m.localAgent.workspaceTask > 0 && msg.err == nil {
+				id := m.localAgent.workspaceTask
+				m.localAgent.workspaceTask = 0
+				m.localAgent.open, m.loading = false, true
+				return m, tea.Batch(m.saveLocalConversation(), func() tea.Msg {
+					info, err := m.client.PostInfo(m.ctx, m.token, id)
+					return agentWorkspaceLoaded{info: info, err: err}
+				})
+			}
+			m.localAgent.workspaceTask = 0
+			if m.localAgent.fundingTask > 0 && msg.err == nil {
+				id := m.localAgent.fundingTask
+				m.localAgent.fundingTask = 0
+				m.localAgent.open = false
+				m.loading = true
+				return m, tea.Batch(m.saveLocalConversation(), func() tea.Msg {
+					info, err := m.client.PostInfo(m.ctx, m.token, id)
+					return agentFundingLoaded{info: info, err: err}
+				})
+			}
+			m.localAgent.fundingTask = 0
 
 			if m.localAgent.postsChanged && m.token != "" && m.onDashboard() {
 				m.localAgent.postsChanged = false
@@ -468,8 +589,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.saveLocalConversation()
 		}
 
+		if msg.event.Type == "open_workspace" && msg.event.PostID > 0 && m.localAgent.fundingTask == 0 && m.localAgent.workspaceTask == 0 {
+			m.localAgent.workspaceTask = msg.event.PostID
+			return m, m.waitLocalAgent()
+		}
+		if msg.event.Type == "open_funding" && msg.event.PostID > 0 && m.localAgent.fundingTask == 0 && m.localAgent.workspaceTask == 0 {
+			m.localAgent.fundingTask = msg.event.PostID
+			return m, m.waitLocalAgent()
+		}
 		if msg.approval != nil {
+			m.localAgent.approvalChoice = 2
 			m.localAgent.approval, m.localAgent.answer, m.localAgent.scroll = msg.approval, msg.answer, 0
+			m.localAgent.approvalChoice, m.localAgent.approvalScroll = 2, 0
+			m.localAgent.approvalGuidance = msg.guidance
+			m.localAgent.approvalEditing = false
+			m.localAgent.approvalInput = textField{limit: 2000, byteLimit: 8000}
 		} else if !m.localAgent.applyEvent(msg.event) {
 			return m, m.waitLocalAgent()
 		}
@@ -612,6 +746,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.workspaceAction, m.workspaceInput, m.reviewConfirm = "", textField{}, false
 		}
 	case walletResult:
+		if msg.err == nil && msg.browser {
+			_ = os.Setenv("MARUVO_WALLET", "browser")
+		}
 		m.loading = false
 		if cmd := m.setPostError(msg.err); cmd != nil {
 			return m, cmd
@@ -621,6 +758,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.walletAddress = msg.address
 			m.notice = "Wallet connected. Payments need your separate approval."
 		}
+	case agentWorkspaceLoaded:
+		m.loading, m.err = false, msg.err
+		if msg.err != nil {
+			m.localAgent.open = true
+			return m, nil
+		}
+		if msg.info.Post.AcceptedBy == nil || (!m.isPoster(msg.info.Post) && !m.isWorker(msg.info.Post)) {
+			m.localAgent.open = true
+			m.notice = "You no longer have access to this accepted task."
+			return m, nil
+		}
+		m.posts, m.selected = []api.Post{msg.info.Post}, 0
+		m.localAgent.open = false
+		return m.openWorkspace("")
+	case agentFundingLoaded:
+		m.loading, m.err = false, msg.err
+		if msg.err != nil {
+			m.localAgent.open = true
+			return m, nil
+		}
+		if !m.isPoster(msg.info.Post) || msg.info.Post.AcceptedBy == nil || msg.info.Post.Status != "negotiating" {
+			m.localAgent.open = true
+			m.notice = "Task is no longer eligible for funding."
+			return m, nil
+		}
+		if state := msg.info.Escrow.State; state != "" && state != "unfunded" && state != "prepared" {
+			m.localAgent.open = true
+			m.notice = "Funding is already pending or complete."
+			return m, nil
+		}
+		m.stopWorkspace()
+		m.posts, m.selected, m.screen, m.scroll = []api.Post{msg.info.Post}, 0, detailScreen, 0
+		m.escrow, m.fundingConfirm, m.loading = msg.info.Escrow, false, true
+		return m, m.prepareFunding()
 	case escrowResult:
 		m.loading = false
 		if cmd := m.setPostError(msg.err); cmd != nil {
@@ -657,13 +828,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.loading, m.loggingIn, m.err = false, false, msg.err
 		if msg.err == nil {
+			m.stopInvites()
+			m.invitations.ctx, m.invitations.cancel = context.WithCancel(m.ctx)
 			m.user, m.token = msg.user, msg.token
 			m.clearDashboard()
 			m.dashboard.all = true
+			m.homeFocus, m.homeInput.limit = homePrompt, 2000
 
 			m.walletAddress = msg.wallet
 			if m.token != "" {
-				return m.openPosts(false)
+				next, cmd := m.openPosts(false)
+				m = next.(model)
+				m.dashboard.focus = dashboardPrompt
+				return m, tea.Batch(cmd, m.connectInvites())
 			}
 		} else if !msg.restored || unauthorized(msg.err) {
 			m.user, m.token = api.User{}, ""
@@ -674,6 +851,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionChecked:
 		if msg.token == m.token && unauthorized(msg.err) {
 			m.stopWorkspace()
+			m.stopInvites()
 			m.token, m.user, m.posts = "", api.User{}, nil
 			m.localAgent = localAgentState{sequence: m.localAgent.sequence + 1}
 			m.walletAddress = ""
@@ -688,6 +866,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "GitHub connected. Refresh tasks to update their profiles."
 		}
 	case logoutResult:
+		m.stopInvites()
 		m.picker.open = false
 		m.profileOpen = false
 

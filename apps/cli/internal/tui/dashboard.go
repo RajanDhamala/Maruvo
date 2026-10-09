@@ -151,7 +151,7 @@ func (m model) dashboardLayout() postLayout {
 	if g.promptY >= 0 {
 		active := m.dashboard.focus == dashboardPrompt && !m.loading && !m.profileOpen
 		submit := button(" Enter send ", active)
-		rows := homePromptRows(m.homeInput, g.mainWidth, active, "Agent", submit)
+		rows := homePromptRows(m.homeInput, g.mainWidth, active, "Agent chat", submit)
 		drawOverlay(width, l.rows, hitArea{y: g.promptY, width: g.mainWidth}, rows)
 		l.hit(
 			g.mainWidth-ansi.StringWidth(submit)-1,
@@ -193,6 +193,11 @@ func (m model) dashboardList(l *postLayout, width, height int) {
 		" ",
 		max(2, width-ansi.StringWidth(title)-ansi.StringWidth(right)),
 	) + right
+	if height >= 6 || (m.dashboard.focus != dashboardSearch && m.dashboard.search.value == "") {
+		create := button(" + Create task ", false)
+		l.rows[1] = create
+		l.hit(0, 1, ansi.StringWidth(create), 1, "dashboard-create", 0)
+	}
 	y := 2
 
 	if m.dashboard.focus == dashboardSearch || m.dashboard.search.value != "" {

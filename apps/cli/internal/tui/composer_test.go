@@ -232,7 +232,7 @@ func TestComposerFitsTerminalAndStaysAtBottom(t *testing.T) {
 		}
 
 		last := ansi.Strip(layout.rows[len(layout.rows)-1])
-		if last != strings.Repeat("─", m.contentWidth()) {
+		if !strings.HasPrefix(last, "▎") || !strings.Contains(strings.Join(layout.rows[max(0, len(layout.rows)-2):], "\n"), "Enter send") {
 			t.Fatal("composer must remain anchored at the bottom")
 		}
 

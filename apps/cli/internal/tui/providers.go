@@ -43,6 +43,20 @@ type providerConfigLoaded struct {
 	err      error
 }
 
+type startupProviderLoaded struct {
+	sequence uint64
+	config   providers.Config
+	err      error
+}
+
+func (m model) checkStartupProvider() tea.Cmd {
+	profile, sequence := m.profile, m.providers.sequence
+	return func() tea.Msg {
+		config, err := providers.LoadConfig(profile)
+		return startupProviderLoaded{sequence: sequence, config: config, err: err}
+	}
+}
+
 type providerModelsLoaded struct {
 	sequence uint64
 	models   []providers.Model

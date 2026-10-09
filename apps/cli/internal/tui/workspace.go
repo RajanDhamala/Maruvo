@@ -20,6 +20,11 @@ type workspaceLoaded struct {
 	workspace  api.Workspace
 	err        error
 }
+
+type agentWorkspaceLoaded struct {
+	info api.PostInfo
+	err  error
+}
 type workspaceConnected struct {
 	generation uint64
 	stream     *api.WorkspaceStream
@@ -38,6 +43,11 @@ type workspaceActionResult struct {
 }
 
 func (m *model) stopWorkspace() {
+	if m.workAgent.active || m.workSetup.armed {
+		m.stopWorkAgent("Task agent stopped when leaving the workspace.")
+	}
+	m.workSetup.generation++
+	m.workSetup.autoReady, m.workSetup.open = false, false
 	m.workspaceGen++
 
 	m.agentControls.open = false
@@ -49,6 +59,7 @@ func (m *model) stopWorkspace() {
 	m.stream, m.workspaceCancel, m.workspaceCtx = nil, nil, nil
 	m.workspaceAction, m.reviewConfirm, m.workspaceReview = "", false, false
 	m.workspacePendingAction = ""
+	m.presence = nil
 	m.reviewVersion = 0
 }
 
@@ -88,6 +99,7 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 	}
 
 	m.workspace, m.escrow = msg.workspace, msg.workspace.Escrow
+	m.workspace.Events = uniqueWorkspaceEvents(m.workspace.Events)
 	for i := range m.posts {
 		if m.posts[i].ID == msg.workspace.Post.ID {
 			m.posts[i] = msg.workspace.Post
@@ -98,6 +110,15 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 
 	if action := m.workspacePendingAction; action != "" {
 		m.workspacePendingAction = ""
+		if action == "work-invite" && m.invitations.accepted != nil {
+			invitation := *m.invitations.accepted
+			m.invitations.accepted = nil
+			next, cmd := m.openWorkSetup("")
+			m = next.(model)
+			m.workSetup.invite = false
+			m.workSetup.target = invitation.Nonce
+			return m, tea.Batch(m.connectWorkspace(), cmd)
+		}
 		if action == "u" {
 			next, cmd := m.startAttachment()
 			m, compose = next.(model), cmd
@@ -149,7 +170,7 @@ func (m model) workspaceConnected(msg workspaceConnected) (tea.Model, tea.Cmd) {
 
 	m.stream, m.live = msg.stream, "Live"
 
-	return m, m.readWorkspace()
+	return m, tea.Batch(m.readWorkspace(), m.refreshRemoteStatus())
 }
 
 func (m model) readWorkspace() tea.Cmd {
@@ -189,34 +210,44 @@ func (m model) workspaceFrame(msg workspaceFrame) (tea.Model, tea.Cmd) {
 		if err := json.Unmarshal(msg.frame.Data, &event); err != nil {
 			m.err = err
 		} else {
-			m.applyWorkspaceEvent(event)
+			if m.applyWorkspaceEvent(event) {
+				m.wakeWorkAgent(event)
+			}
 		}
 	}
 
 	return m, m.readWorkspace()
 }
 
-func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
+func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) bool {
 	if event.PostID != m.workspace.Post.ID {
-		return
+		return false
+	}
+
+	for i, existing := range m.workspace.Events {
+		if sameWorkspaceEvent(existing, event) {
+			m.workspace.Events[i] = mergeReplayIdentity(existing, event)
+			if api.StreamCursorAfter(event.StreamID, m.workspace.Cursor) {
+				m.workspace.Cursor = event.StreamID
+			}
+			if event.ID > m.workspace.State.LastEventID {
+				m.workspace.State.LastEventID = event.ID
+			}
+			return false
+		}
 	}
 
 	if event.StreamID != "" {
 		if !api.StreamCursorAfter(event.StreamID, m.workspace.Cursor) {
-			return
+			return false
 		}
 
 		m.workspace.Cursor = event.StreamID
-		for _, existing := range m.workspace.Events {
-			if existing.StreamID == event.StreamID {
-				return
-			}
-		}
 	}
 
 	if event.ID > 0 {
 		if event.ID <= m.workspace.State.LastEventID {
-			return
+			return false
 		}
 
 		m.workspace.State.LastEventID = event.ID
@@ -248,7 +279,7 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		DeliveryFiles     []string   `json:"delivery_files"`
 	}
 	if json.Unmarshal(event.Data, &data) != nil {
-		return
+		return false
 	}
 
 	switch event.Kind {
@@ -269,7 +300,7 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 	case "file.shared":
 		for _, file := range m.workspace.Files {
 			if file.ID == data.ID {
-				return
+				return false
 			}
 		}
 
@@ -360,6 +391,7 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		m.workspaceAction, m.workspaceInput, m.reviewConfirm = "", textField{}, false
 		m.notice = "Delivery changed. Reopen review before deciding."
 	}
+	return true
 }
 
 func (m model) updateWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -403,6 +435,17 @@ func (m model) updateWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "workspace-agent":
+		if m.workAgent.active || m.workSetup.armed {
+			m.stopWorkAgent("Your agent stopped.")
+			return m, m.saveLocalConversation()
+		}
+		next, cmd := m.openWorkSetup(strings.TrimSpace(m.composer.draft.value))
+		m = next.(model)
+		if m.workSetup.open {
+			m.composer.draft = textField{limit: 4000}
+		}
+		return m, cmd
 	case "workspace-control":
 		return m.openAgentControls()
 	case "q":
@@ -548,6 +591,9 @@ func (m model) workspaceLayout() postLayout {
 	}
 
 	l.rows = append(l.rows, muted("Delivery: "+strings.ReplaceAll(m.workspace.State.ReviewState, "_", " ")))
+	if m.workspaceReview && height >= 24 {
+		l.rows = append(l.rows, flowRows(m.workspaceFlow(), width)...)
+	}
 	if post.Remote.Status != "" {
 		l.rows = append(l.rows, muted(remoteLabel(post)))
 	}
@@ -763,4 +809,49 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 	}
 
 	return event.Kind
+}
+
+func sameWorkspaceEvent(a, b api.WorkspaceEvent) bool {
+	if a.PostID != b.PostID {
+		return false
+	}
+	if a.ID > 0 && a.ID == b.ID {
+		return true
+	}
+	if a.StreamID != "" && a.StreamID == b.StreamID {
+		return true
+	}
+	if a.Kind != "message" || b.Kind != "message" || a.ActorID == nil || b.ActorID == nil || *a.ActorID != *b.ActorID {
+		return false
+	}
+	var x, y struct {
+		MessageID string `json:"message_id"`
+	}
+	return json.Unmarshal(a.Data, &x) == nil && json.Unmarshal(b.Data, &y) == nil && x.MessageID != "" && x.MessageID == y.MessageID
+}
+func mergeReplayIdentity(existing, replay api.WorkspaceEvent) api.WorkspaceEvent {
+	if existing.ID == 0 {
+		existing.ID = replay.ID
+	}
+	if api.StreamCursorAfter(replay.StreamID, existing.StreamID) {
+		existing.StreamID = replay.StreamID
+	}
+	return existing
+}
+func uniqueWorkspaceEvents(events []api.WorkspaceEvent) []api.WorkspaceEvent {
+	result := make([]api.WorkspaceEvent, 0, len(events))
+	for _, event := range events {
+		duplicate := false
+		for i, existing := range result {
+			if sameWorkspaceEvent(existing, event) {
+				result[i] = mergeReplayIdentity(existing, event)
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			result = append(result, event)
+		}
+	}
+	return result
 }

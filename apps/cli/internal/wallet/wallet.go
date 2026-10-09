@@ -19,10 +19,17 @@ import (
 const ProgramID = "FEV9eR2WC2pPo6RDWEx9iSwvBHfokVpBED246fdUg2hd"
 const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-type Wallet struct{ key ed25519.PrivateKey }
+type Wallet struct {
+	key         ed25519.PrivateKey
+	address     string
+	browserSign func([]byte) ([]byte, error)
+}
 
 func Load() (*Wallet, error) {
 	path := os.Getenv("MARUVO_WALLET")
+	if path == "browser" {
+		return nil, errors.New("use the terminal UI to approve with your browser wallet")
+	}
 	if path == "" {
 		return nil, errors.New(
 			"Set MARUVO_WALLET to your test wallet keypair file, then connect your wallet.",
@@ -76,7 +83,12 @@ func Base58(data []byte) string {
 	return result
 }
 
-func (w *Wallet) Address() string { return Base58(w.key[32:]) }
+func (w *Wallet) Address() string {
+	if w.address != "" {
+		return w.address
+	}
+	return Base58(w.key[32:])
+}
 func (w *Wallet) SignMessage(message string) string {
 	return base64.StdEncoding.EncodeToString(ed25519.Sign(w.key, []byte(message)))
 }
@@ -149,9 +161,7 @@ func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
 		return "", errors.New("reviewer does not match your local Solana configuration")
 	}
 
-	copy(data[1:65], ed25519.Sign(w.key, message))
-
-	return base64.StdEncoding.EncodeToString(data), nil
+	return w.signTransaction(data)
 }
 
 func agreementHash(post api.Post, version int32) [32]byte {

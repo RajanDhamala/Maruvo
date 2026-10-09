@@ -27,6 +27,10 @@ make tui
 
 `make local` checks the local validator and escrow program, tops up local test wallets, and starts missing Rust/API services. Existing services are reused. Ctrl+C stops the services it started. The validator runs in a container with RPC/faucet ports published only on localhost; no images are pulled automatically. PostgreSQL must already be running with the migrations applied.
 
+For remote Solana with a single terminal, use `make devnet ARGS="-profile poster -wallet .solana/poster-keypair.json"` after the free Devnet funding/deployment steps in [Solana setup](docs/solana.md). This starts the TUI and skips the local validator.
+
+For Phantom/Solflare on Devnet, use `make devnet ARGS="-profile browser -wallet browser"`, sign in and press `w`, or open `/wallet`. Existing accounts keep their linked wallet; see [browser wallet setup](docs/solana.md#browser-wallets).
+
 Redis must be running. To create it using the locally installed image and persistent storage:
 
 ```sh

@@ -140,6 +140,24 @@ type AgentOffer struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type EmailNotification struct {
+	ID            int64              `json:"id"`
+	PostID        int64              `json:"post_id"`
+	EventID       int64              `json:"event_id"`
+	RecipientID   int64              `json:"recipient_id"`
+	Recipient     string             `json:"recipient"`
+	Subject       string             `json:"subject"`
+	Body          string             `json:"body"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	SentAt        pgtype.Timestamptz `json:"sent_at"`
+}
+
+type EmailPreference struct {
+	UserID  int64 `json:"user_id"`
+	Enabled bool  `json:"enabled"`
+}
+
 type Post struct {
 	ID                   int64              `json:"id"`
 	UserID               int64              `json:"user_id"`

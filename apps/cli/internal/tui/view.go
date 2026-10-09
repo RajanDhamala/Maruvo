@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -9,8 +10,20 @@ import (
 )
 
 func (m model) View() tea.View {
+	if m.invitations.pending != nil {
+		return m.inviteView()
+	}
+	if m.workSetup.open {
+		return m.workSetupView()
+	}
+	if m.permissions.open {
+		return m.permissionsView()
+	}
 	if m.shortcutsOpen {
 		return m.shortcutsView()
+	}
+	if m.localAgent.open && m.localAgent.approval != nil {
+		return m.actionApprovalView()
 	}
 
 	if m.agentControls.open {
@@ -25,7 +38,7 @@ func (m model) View() tea.View {
 		return m.remoteView()
 	}
 
-	if m.localAgent.open {
+	if m.localAgentVisible() {
 		return m.commandView(m.localAgentView())
 	}
 
@@ -180,6 +193,8 @@ func (m model) frame(body []string, footer string) tea.View {
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
+	view.BackgroundColor = color.RGBA{R: 10, G: 10, B: 10, A: 255}
+	view.ForegroundColor = color.RGBA{R: 238, G: 238, B: 238, A: 255}
 
 	return view
 }

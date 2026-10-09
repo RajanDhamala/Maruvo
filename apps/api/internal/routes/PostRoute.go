@@ -7,6 +7,9 @@ import (
 )
 
 func PostRoute(app *http.ServeMux, ctrl *controller.Controller) {
+	app.HandleFunc("GET /ws/work-invites", ctrl.Auth(ctrl.WorkInvites))
+	app.HandleFunc("GET /posts/{id}/agent-ready", ctrl.Auth(ctrl.AgentReadiness))
+	app.HandleFunc("POST /posts/{id}/agent-ready", ctrl.Auth(ctrl.AgentReadiness))
 	app.HandleFunc("GET /agent/inbox", ctrl.Auth(ctrl.RemoteInbox))
 	app.HandleFunc("POST /posts/{id}/activity", ctrl.Auth(ctrl.UpdateRemoteActivity))
 	app.HandleFunc("GET /posts/{id}/agent-control", ctrl.Auth(ctrl.GetAgentControl))
@@ -37,6 +40,7 @@ func PostRoute(app *http.ServeMux, ctrl *controller.Controller) {
 	app.HandleFunc("POST /posts/fund", ctrl.Auth(ctrl.PreparePostFunding))
 	app.HandleFunc("POST /posts/fund/submit", ctrl.Auth(ctrl.SubmitPostFunding))
 	app.HandleFunc("GET /posts/{id}/workspace", ctrl.Auth(ctrl.GetWorkspace))
+	app.HandleFunc("GET /posts/{id}/presence", ctrl.Auth(ctrl.WorkspacePresence))
 	app.HandleFunc("GET /posts/{id}/history", ctrl.Auth(ctrl.WorkspaceHistory))
 	app.HandleFunc("POST /posts/{id}/messages", ctrl.Auth(ctrl.WorkspaceMessage))
 	app.HandleFunc("POST /posts/{id}/files", ctrl.Auth(ctrl.UploadWorkspaceFile))

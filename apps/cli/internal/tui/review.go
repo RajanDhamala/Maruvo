@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
-	"github.com/rajandhamala/Maruvo/cli/internal/wallet"
 )
 
 type reviewPrepared struct {
@@ -94,7 +93,7 @@ func (m model) signSettlement() (tea.Model, tea.Cmd) {
 	m.loading, m.err = true, nil
 
 	return m, func() tea.Msg {
-		key, err := wallet.Load()
+		key, err := m.loadWallet(ctx)
 		if err != nil {
 			return workspaceActionResult{generation: generation, err: err}
 		}
@@ -117,14 +116,14 @@ func (m model) reviewConfirmationLayout() postLayout {
 
 	title, recipient, buttonLabel := "Pay the worker?", post.WorkerWallet, "Sign & pay worker"
 	if plan.Settlement.Action == "refund" {
-		title, recipient, buttonLabel = "Refund the poster?", post.PosterWallet, "Sign & refund poster"
+		title, recipient, buttonLabel = "Refund the requester?", post.PosterWallet, "Sign & refund requester"
 	}
 
 	l := postLayout{
 		rows: []string{
 			bold(title),
 			"",
-			fmt.Sprintf("Escrow amount  %d lamports", post.CostLamports),
+			"Escrow amount  " + taskBudget(post.CostLamports),
 			fmt.Sprintf("Network fee    %d lamports", plan.Settlement.FeeLamports),
 			"Network        " + plan.Escrow.Network,
 			"Recipient      " + ansi.Truncate(recipient, max(1, m.contentWidth()-15), "…"),

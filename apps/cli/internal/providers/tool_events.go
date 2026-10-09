@@ -26,18 +26,21 @@ func toolDisplayText(value string) string {
 
 func describeTool(call ToolCall, status, detail string) Event {
 	var args struct {
-		Path  string `json:"path"`
-		Post  int64  `json:"post"`
-		Query string `json:"query"`
-		Level string `json:"level"`
-		Title string `json:"title"`
-		Name  string `json:"name"`
+		Path    string `json:"path"`
+		Post    int64  `json:"post"`
+		Query   string `json:"query"`
+		Level   string `json:"level"`
+		Title   string `json:"title"`
+		Name    string `json:"name"`
+		Command string `json:"command"`
 	}
 
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
 
 	label, target := call.Function.Name, ""
 	switch label {
+	case "run_command":
+		label, target = "Run command", args.Command
 	case "list_files":
 		label, target = "List directory", args.Path
 	case "read_file":

@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rajandhamala/Maruvo/cli/internal/api"
 )
 
 func (m model) postsView() tea.View {
@@ -52,12 +54,13 @@ func (m model) detailLayout() postLayout {
 		l = m.recoveryLayout()
 	} else if m.fundingConfirm {
 		l.rows = []string{bold("Fund this task's escrow?"), muted(plain(post.Title)), "",
-			fmt.Sprintf("Payment       %d lamports", post.CostLamports),
+			"Payment       " + taskBudget(post.CostLamports),
 			fmt.Sprintf("Network fee   %d lamports", m.escrow.FeeLamports),
 			fmt.Sprintf("Storage       %d lamports", m.escrow.StorageLamports),
 			"Network       " + m.escrow.Network,
 			"Reviewer      " + ansi.Truncate(m.escrow.Reviewer, max(1, m.contentWidth()-14), "…"),
-			muted("Funds stay in escrow until the reviewer settles."), ""}
+			muted("Your signature locks this payment in escrow so work can start."),
+			muted("The authorized reviewer releases payment or approves a refund."), ""}
 		if post.DeliverBy != nil {
 			l.rows = append(l.rows[:len(l.rows)-1], taskTimingRows(post)...)
 		}
@@ -150,7 +153,7 @@ func (m model) detailHeader() postLayout {
 	post := m.posts[m.selected]
 	width := m.contentWidth()
 
-	status := strings.ReplaceAll(post.Status, "_", " ")
+	status := taskStatus(post)
 	if post.Deadline.DueAt != nil && !time.Now().Before(*post.Deadline.DueAt) && activeTask(post) {
 		status = deadlineLabel(post.Deadline)
 	}
@@ -166,16 +169,26 @@ func (m model) detailHeader() postLayout {
 		},
 		footer: "↑↓ / wheel scroll · Esc back · n new · q quit",
 	}
+	if m.bodyHeight() >= 12 {
+		l.rows = append(l.rows, accent(m.taskFlow(post, m.escrow, "", api.Settlement{}, false).stage))
+	}
 	if m.isPoster(post) && post.AcceptedBy == nil {
 		l.wrappedButtons(width, []string{"Change status", "Delete task", "Back"}, []string{"s", "d", "back"})
 		l.footer = "s status · d delete · ↑↓ scroll · Esc back"
-	} else if !m.isPoster(post) && post.Status == "open" && post.EndTime.After(time.Now()) {
+	} else if !m.isPoster(post) && post.Status == "open" && post.EndTime.After(time.Now()) &&
+		(post.TargetWorker == nil || strconv.FormatInt(*post.TargetWorker, 10) == m.user.ID) {
 		l.wrappedButtons(width, []string{"Accept task", "Back"}, []string{"a", "back"})
 		l.footer = "a accept · w wallet · r refresh · ↑↓ scroll · Esc back"
-	} else if m.isPoster(post) && post.AcceptedBy != nil && post.Status == "negotiating" {
-		labels, actions := []string{"Fund escrow", "Chat", "Send file"}, []string{"f", "c", "u"}
+	} else if m.isPoster(post) && post.AcceptedBy != nil && post.Status == "negotiating" && m.escrow.State != "confirmed" {
+		labels, actions := []string{"Fund escrow", "Open workspace", "Share inputs"}, []string{"f", "c", "u"}
 		if m.canRecover(post) {
 			labels, actions = append(labels, "Cancel task", "Reopen as new"), append(actions, "x", "o")
+		}
+		if width < 64 {
+			labels, actions = []string{"Fund escrow", "Workspace"}, []string{"f", "c"}
+		}
+		if m.escrow.State == "pending" {
+			labels[0], actions[0] = "Refresh funding", "refresh"
 		}
 
 		l.wrappedButtons(
@@ -183,7 +196,10 @@ func (m model) detailHeader() postLayout {
 			append(labels, "Back"),
 			append(actions, "back"),
 		)
-		l.footer = "f fund · x cancel · o reopen · c chat · r refresh · Esc back"
+		l.footer = "f fund · x cancel · o reopen · c workspace · r refresh · Esc back"
+		if m.escrow.State == "pending" {
+			l.footer = "r check funding · c workspace · Esc back"
+		}
 	} else if m.canRecover(post) && post.Status == "cancelled" {
 		label := "Reopen as new"
 		if post.ReopenedAs != nil {
@@ -195,10 +211,10 @@ func (m model) detailHeader() postLayout {
 	} else if post.AcceptedBy != nil {
 		l.wrappedButtons(
 			width,
-			[]string{"Chat", "Send file", "Refresh", "Back"},
-			[]string{"c", "u", "refresh", "back"},
+			[]string{"Open workspace", "Back"},
+			[]string{"c", "back"},
 		)
-		l.footer = "c chat · u file · r refresh · ↑↓ scroll · Esc back"
+		l.footer = "c workspace · u file · r refresh · ↑↓ scroll · Esc back"
 	} else {
 		l.wrappedButtons(width, []string{"Refresh", "Back"}, []string{"refresh", "back"})
 	}
@@ -220,11 +236,15 @@ func (m model) detailRows() []string {
 	post := m.posts[m.selected]
 	width := m.contentWidth()
 
-	rows := []string{
-		"Posted by  " + participantLabel(post.Poster, post.UserID),
-		"Accept by  " + post.EndTime.Local().Format("02 Jan 2006, 15:04 MST"),
-		fmt.Sprintf("Budget     %d lamports", post.CostLamports),
+	rows := flowRows(m.taskFlow(post, m.escrow, "", api.Settlement{}, false), width)
+	if m.bodyHeight() >= 12 {
+		rows = rows[1:]
 	}
+	rows = append(rows, "",
+		"Posted by  "+participantLabel(post.Poster, post.UserID),
+		"Accept by  "+post.EndTime.Local().Format("02 Jan 2006, 15:04 MST"),
+		fmt.Sprintf("Budget     %d lamports", post.CostLamports),
+	)
 	for _, row := range taskTimingRows(post) {
 		rows = append(rows, strings.Split(ansi.Wrap(row, width, " "), "\n")...)
 	}

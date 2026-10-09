@@ -61,6 +61,33 @@ func TestStaleAuthenticationCannotDiscardNewLogin(t *testing.T) {
 	}
 }
 
+func TestRestoredSessionFocusesPrompt(t *testing.T) {
+	for _, setupFirst := range []bool{false, true} {
+		m := dashboardFixture()
+		m.token = ""
+		if setupFirst {
+			next, _ := m.Update(startupProviderLoaded{})
+			m = next.(model)
+		}
+		next, _ := m.Update(authResult{restored: true, token: "session", user: api.User{ID: "7"}})
+		m = next.(model)
+		if !setupFirst {
+			next, _ = m.Update(startupProviderLoaded{})
+			m = next.(model)
+		}
+		if m.dashboard.focus != dashboardPrompt || m.dashboard.promptHidden || !m.providers.open {
+			t.Fatal("startup must preserve provider setup and prompt focus in either load order")
+		}
+		next, _ = m.closeProviders()
+		m = next.(model)
+		m.loading = false
+		next, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})
+		if next.(model).homeInput.value != "h" {
+			t.Fatal("first key did not reach the prompt")
+		}
+	}
+}
+
 func TestAgentStopKeepsConversationAndUsageAtBottom(t *testing.T) {
 	m := dashboardFixture()
 	ctx, cancel := context.WithCancel(context.Background())

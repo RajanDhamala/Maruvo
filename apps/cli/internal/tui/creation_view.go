@@ -22,6 +22,8 @@ func (m model) formView() tea.View {
 		"", "  " + header, "",
 		strings.Repeat(" ", m.contentX()) + muted("‹ Back") + "   " + bold("New task"), "",
 	}
+	lines[4] = strings.Repeat(" ", m.contentX()) + muted(ansi.Truncate(
+		"Publish → Worker accepts → Fund escrow → Delivery → Review & pay", m.contentWidth(), "…"))
 	if m.form.targetWorker != nil {
 		lines[3] += muted("  → " + plain(m.form.targetName))
 	}

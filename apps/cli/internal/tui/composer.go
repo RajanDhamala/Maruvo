@@ -209,6 +209,21 @@ func (m model) updateComposer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) sendChat() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.composer.draft.value)
+	name, argument, _ := commandParts(text)
+	if name == "/agent" || name == "/work" {
+		m.composer.draft = textField{limit: 4000}
+		if name == "/agent" {
+			return m.startWorkAgent(argument)
+		}
+		return m.openWorkSetup(argument)
+	}
+	for i, command := range slashCommands {
+		if text == command.name && (text == "/model" || text == "/connect" || text == "/new" || text == "/agent" || text == "/sessions" || text == "/remote" || text == "/open" || text == "/attach" || text == "/wallet") {
+			m.composer.draft = textField{limit: 4000}
+			m.composer.messageID, m.composer.messageText = "", ""
+			return m.chooseCommand(i)
+		}
+	}
 
 	commands := map[string]string{
 		"/files":   "tab",
@@ -315,7 +330,7 @@ func (m model) chatSent(msg chatSent) (tea.Model, tea.Cmd) {
 
 func (m model) composerRows(width int) []string {
 	c := m.composer
-	rows := []string{muted(strings.Repeat("─", width))}
+	var rows []string
 
 	if len(c.attachments) > 0 {
 		var names []string
@@ -323,11 +338,11 @@ func (m model) composerRows(width int) []string {
 			names = append(names, "["+plain(filepath.Base(file.path))+" ×]")
 		}
 
-		rows = append(rows, accent("  "+strings.Join(names, " ")))
+		rows = append(rows, accent(strings.Join(names, " ")))
 	}
 
 	input := muted(
-		ansi.Truncate("Message · @filename to attach · /files /review /task", max(1, width-3), "…"),
+		ansi.Truncate("Message the other participant…", max(1, width-5), "…"),
 	)
 	runes := []rune(c.draft.value)
 
@@ -348,7 +363,7 @@ func (m model) composerRows(width int) []string {
 		input = "\x1b[7m \x1b[0m" + input
 	}
 
-	lines := strings.Split(ansi.Wrap(input, max(1, width-2), ""), "\n")
+	lines := strings.Split(ansi.Wrap(input, max(1, width-5), ""), "\n")
 
 	maxLines := m.bodyHeight() - 4
 	if m.bodyHeight() >= 10 {
@@ -368,17 +383,18 @@ func (m model) composerRows(width int) []string {
 	}
 
 	maxLines = max(1, min(3, maxLines))
-	cursorLine := strings.Count(ansi.Wrap(string(runes[:cursor]), max(1, width-2), ""), "\n")
+	cursorLine := strings.Count(ansi.Wrap(string(runes[:cursor]), max(1, width-5), ""), "\n")
 
 	start := max(0, min(cursorLine-maxLines+1, len(lines)-maxLines))
-	for i, line := range lines[start:min(len(lines), start+maxLines)] {
-		prefix := "  "
-		if i == 0 {
-			prefix = accent("› ")
-		}
-
-		rows = append(rows, prefix+line)
+	for _, line := range lines[start:min(len(lines), start+maxLines)] {
+		rows = append(rows, line)
 	}
-
-	return append(rows, muted(strings.Repeat("─", width)))
+	mode := "Task chat · / commands · @ attach"
+	if !m.workAgent.active {
+		mode = "Task chat · send to participant · Start agent to work"
+	}
+	if m.loading {
+		mode = "Sending…"
+	}
+	return promptCardRows(rows, width, !m.loading, mode, button(" Enter send ", !m.loading), m.bodyHeight() < 12)
 }

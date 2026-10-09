@@ -55,7 +55,7 @@ func main() {
 	demo := flags.Bool("demo", false, "show the existing Go/Rust connection demo")
 	profile := flags.String("profile", "default", "saved login profile (e.g. poster or worker)")
 
-	wallet := flags.String("wallet", "", "wallet keypair file (saved separately for each profile)")
+	wallet := flags.String("wallet", "", "wallet keypair file or browser for Phantom/Solflare (saved per profile)")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			if agentMode {
@@ -158,7 +158,11 @@ func main() {
 		}
 
 		if chosen != "" {
-			path, err := filepath.Abs(chosen)
+			path := chosen
+			var err error
+			if chosen != "browser" {
+				path, err = filepath.Abs(chosen)
+			}
 			if err != nil {
 				fail(err)
 			}

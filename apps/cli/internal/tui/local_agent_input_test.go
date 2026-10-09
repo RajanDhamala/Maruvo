@@ -113,15 +113,18 @@ func TestAgentSlashCommandsAndDismissalPreserveChat(t *testing.T) {
 	next, _ := m.Update(tea.PasteMsg{Content: "/"})
 
 	m = next.(model)
-	if !m.commands.open || !m.commands.agent || len(m.commandIndices()) != len(slashCommands) {
+	if !m.commands.open || !m.commands.agent || len(m.commandIndices()) == 0 {
 		t.Fatal("agent chat did not expose the shared slash commands")
 	}
 
 	view := ansi.Strip(m.View().Content)
-	for _, command := range slashCommands {
-		if !strings.Contains(view, command.name) {
-			t.Fatalf("agent command missing from menu: %s", command.name)
+	for _, name := range []string{"/open", "/model", "/connect", "/agent", "/sessions", "/remote", "/new"} {
+		if !strings.Contains(view, name) {
+			t.Fatalf("agent command missing from menu: %s", name)
 		}
+	}
+	if strings.Contains(view, "/submit") {
+		t.Fatal("task commands must remain in the workspace")
 	}
 
 	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,10 +17,17 @@ import (
 )
 
 type Marketplace struct {
-	client     *api.Client
-	token      string
-	scoped     bool
-	walletPath string
+	client         *api.Client
+	token          string
+	scoped         bool
+	walletPath     string
+	account        api.User
+	profile        string
+	FundingUI      bool
+	TaskID         int64
+	Commands       bool
+	FullAccess     bool
+	PermissionMode string
 }
 
 func LoadMarketplace(client *api.Client, profile string) (*Marketplace, error) {
@@ -48,7 +56,31 @@ func LoadMarketplace(client *api.Client, profile string) (*Marketplace, error) {
 		return nil, err
 	}
 
-	return &Marketplace{client: client, token: token, scoped: scoped, walletPath: walletPath}, nil
+	return &Marketplace{client: client, token: token, scoped: scoped, walletPath: walletPath, profile: profile}, nil
+}
+
+func (m *Marketplace) SetAccount(user api.User) {
+	if m != nil && !m.scoped {
+		m.account = user
+	}
+}
+
+func (m *Marketplace) accountContext() map[string]string {
+	return map[string]string{"user_id": m.account.ID, "username": m.account.Username, "github_login": m.account.GitHubLogin, "profile": m.profile}
+}
+
+func (m *Marketplace) participantRole(post api.Post) string {
+	id, err := strconv.ParseInt(m.account.ID, 10, 64)
+	if err != nil || id <= 0 {
+		return "unknown"
+	}
+	if post.UserID == id {
+		return "requester"
+	}
+	if post.AcceptedBy != nil && *post.AcceptedBy == id {
+		return "worker"
+	}
+	return "other"
 }
 
 func marketTool(name, description, schema string) Tool {
@@ -71,8 +103,15 @@ func (m *Marketplace) tools() []Tool {
 	}
 
 	tools = append(tools, remoteTools()...)
+	if m.TaskID > 0 {
+		return slices.DeleteFunc(tools, func(tool Tool) bool { return tool.Function.Name == "wait_remote" })
+	}
 	if m.scoped {
 		return tools
+	}
+	if m.FundingUI {
+		tools = append(tools, marketTool("open_funding", "Open this account's accepted task funding review screen in the CLI. Does not sign or transfer funds; the human approves there. Use when the user wants to fund or move an accepted task forward. Only one task per turn.", `{"type":"object","properties":{"post":{"type":"integer","minimum":1}},"required":["post"],"additionalProperties":false}`))
+		tools = append(tools, marketTool("open_workspace", "Open an accepted task's private workspace in the CLI for the current participant. Use when asked to open or continue collaboration. Funding can still be pending; paid work requires confirmed escrow. Only one screen per turn.", `{"type":"object","properties":{"post":{"type":"integer","minimum":1}},"required":["post"],"additionalProperties":false}`))
 	}
 
 	return append(
@@ -89,12 +128,12 @@ func (m *Marketplace) tools() []Tool {
 		),
 		marketTool(
 			"find_posts",
-			"Search other users' open posts by optional query and difficulty. Query matches title, instructions or acceptance criteria, ignoring case. Omit difficulty to search all levels. Returns paginated summaries; use get_task to read a matching post before accepting.",
+			"Search other users' OPEN, UNACCEPTED posts by optional query and difficulty. This feed excludes already accepted tasks and your own posted jobs. Use my_posts to check whether your jobs were accepted. Query matches title, instructions or acceptance criteria, ignoring case. Omit difficulty to search all levels. Use get_task before accepting.",
 			`{"type":"object","properties":{"query":{"type":"string","maxLength":200},"level":{"type":"string","enum":["easy","medium","complex"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}`,
 		),
 		marketTool(
 			"my_posts",
-			"Search posts created, accepted, or assigned for review by this account with an optional query matching title, instructions or acceptance criteria, ignoring case. Returns paginated summaries; use get_task to read a matching post.",
+			"Check this account's posted, accepted and review tasks, including jobs accepted by another user. These are NOT all authored by you. Results identify current_account, user_id (requester), accepted_by (worker), accepted and your_role. accepted=true means reserved even when waiting for funding. Use get_task for funding state and authoritative workspace role. Optional query matches title, instructions or acceptance criteria, ignoring case.",
 			`{"type":"object","properties":{"query":{"type":"string","maxLength":200},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}`,
 		),
 		marketTool(
@@ -138,6 +177,14 @@ func (m *Marketplace) execute(ctx context.Context, call ToolCall, access ...remo
 
 	if !m.handles(call.Function.Name) {
 		return "", errors.New("marketplace tool unavailable for this login")
+	}
+	if m.TaskID > 0 {
+		var target struct {
+			Post int64 `json:"post"`
+		}
+		if json.Unmarshal([]byte(call.Function.Arguments), &target) != nil || target.Post != m.TaskID {
+			return "", errors.New("workspace agent tools are limited to the active task")
+		}
 	}
 
 	var result any
@@ -320,6 +367,12 @@ func (m *Marketplace) execute(ctx context.Context, call ToolCall, access ...remo
 				summaries,
 				map[string]any{
 					"id":            post.ID,
+					"user_id":       post.UserID,
+					"accepted_by":   post.AcceptedBy,
+					"accepted_at":   post.AcceptedAt,
+					"accepted":      post.AcceptedBy != nil,
+					"your_role":     m.participantRole(post),
+					"remote_status": post.Remote.Status,
 					"title":         post.Title,
 					"status":        post.Status,
 					"level":         post.Level,
@@ -332,12 +385,13 @@ func (m *Marketplace) execute(ctx context.Context, call ToolCall, access ...remo
 		}
 
 		result = map[string]any{
-			"posts":       summaries,
-			"total":       len(posts),
-			"next_offset": end,
-			"has_more":    end < len(posts),
+			"current_account": m.accountContext(),
+			"posts":           summaries,
+			"total":           len(posts),
+			"next_offset":     end,
+			"has_more":        end < len(posts),
 		}
-	case "get_task", "accept_post":
+	case "get_task", "accept_post", "open_funding", "open_workspace":
 		var args struct {
 			Post int64 `json:"post"`
 		}
@@ -368,6 +422,31 @@ func (m *Marketplace) execute(ctx context.Context, call ToolCall, access ...remo
 
 			if info.Post.ID != args.Post {
 				return "", errors.New("API returned a different task")
+			}
+			if call.Function.Name == "open_workspace" {
+				role := m.participantRole(info.Post)
+				if info.Post.AcceptedBy == nil || (role != "requester" && role != "worker") {
+					return "", errors.New("only a participant can open an accepted task workspace")
+				}
+				workspace, err := m.client.Workspace(ctx, m.token, args.Post)
+				if err != nil {
+					return "", err
+				}
+				if workspace.Post.ID != args.Post {
+					return "", errors.New("API returned a different workspace")
+				}
+				data, err := json.Marshal(map[string]any{"post": args.Post, "status": "workspace_screen_requested", "funding": workspace.Escrow.State})
+				return string(data), err
+			}
+			if call.Function.Name == "open_funding" {
+				if m.participantRole(info.Post) != "requester" || info.Post.AcceptedBy == nil || info.Post.Status != "negotiating" {
+					return "", errors.New("only the requester can open funding for an accepted negotiating task")
+				}
+				if info.Escrow.State != "" && info.Escrow.State != "unfunded" && info.Escrow.State != "prepared" {
+					return "", errors.New("funding is already pending or complete; refresh task state")
+				}
+				data, err := json.Marshal(map[string]any{"post": args.Post, "status": "funding_screen_requested", "signed": false})
+				return string(data), err
 			}
 
 			info.Escrow.Transaction = ""

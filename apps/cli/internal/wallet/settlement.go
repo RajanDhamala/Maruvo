@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -70,7 +69,5 @@ func (w *Wallet) SignSettlement(post api.Post, plan api.SettlementPlan) (string,
 		return "", errors.New("settlement action changed")
 	}
 
-	copy(data[1:65], ed25519.Sign(w.key, message))
-
-	return base64.StdEncoding.EncodeToString(data), nil
+	return w.signTransaction(data)
 }

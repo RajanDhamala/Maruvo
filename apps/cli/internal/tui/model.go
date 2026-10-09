@@ -43,6 +43,9 @@ type model struct {
 	commands               commandMenu
 	providers              providerSettings
 	localAgent             localAgentState
+	workAgent              workspaceAgent
+	workSetup              workSetup
+	permissions            localPermissions
 	remote                 remoteState
 	agentControls          agentControls
 	dashboard              dashboardState
@@ -69,12 +72,14 @@ type model struct {
 	editingStatus          bool
 	statusChoice           int
 	scroll                 int
+	invitations            inviteState
 	workspace              api.Workspace
 	workspaceGen           uint64
 	workspaceCtx           context.Context
 	workspaceCancel        context.CancelFunc
 	stream                 *api.WorkspaceStream
 	live                   string
+	presence               *api.WorkspacePresence
 	workspaceAction        string
 	workspacePendingAction string
 	workspaceInput         textField
@@ -90,18 +95,21 @@ type model struct {
 
 func Run(ctx context.Context, client *api.Client, message string, demo bool, profile string) error {
 	final, err := tea.NewProgram(model{
-		ctx:      ctx,
-		client:   client,
-		profile:  profile,
-		homePath: currentHomePath(),
-		message:  message,
-		loading:  true,
-		demo:     demo,
-		width:    80,
-		height:   24,
+		ctx:       ctx,
+		client:    client,
+		profile:   profile,
+		dashboard: dashboardState{focus: dashboardPrompt},
+		homeInput: textField{limit: 2000},
+		homePath:  currentHomePath(),
+		message:   message,
+		loading:   true,
+		demo:      demo,
+		width:     80,
+		height:    24,
 	}).Run()
 	if m, ok := final.(model); ok {
 		m.stopWorkspace()
+		m.stopInvites()
 	}
 
 	return err
@@ -112,5 +120,5 @@ func (m model) Init() tea.Cmd {
 		return m.sendDemo()
 	}
 
-	return tea.Batch(m.restoreSession(), deadlineTick(), remoteTick())
+	return tea.Batch(m.restoreSession(), m.checkStartupProvider(), deadlineTick(), remoteTick())
 }

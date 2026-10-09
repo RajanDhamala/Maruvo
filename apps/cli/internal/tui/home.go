@@ -190,7 +190,7 @@ func homePromptRows(field textField, width int, active bool, mode, submit string
 	text := field.render(width-5, active)
 	if field.value == "" {
 		placeholder := "Describe a task…"
-		if mode == "Agent" {
+		if strings.HasPrefix(mode, "Agent") {
 			placeholder = "Ask the agent…"
 		}
 
@@ -200,14 +200,20 @@ func homePromptRows(field textField, width int, active bool, mode, submit string
 		}
 	}
 
-	meta := align(muted(mode), submit, width-4)
+	return promptCardRows([]string{text}, width, active, mode, submit, false)
+}
 
-	rows := []string{
-		inputRow("", width-1),
-		inputRow(" "+text, width-1),
-		inputRow("", width-1),
-		inputRow(" "+meta, width-1),
-		inputRow("", width-1),
+func promptCardRows(text []string, width int, active bool, mode, submit string, compact bool) []string {
+	rows := []string{inputRow("", width-1)}
+	for _, line := range text {
+		rows = append(rows, inputRow(" "+line, width-1))
+	}
+	if !compact {
+		rows = append(rows, inputRow("", width-1))
+	}
+	rows = append(rows, inputRow(" "+align(muted(mode), submit, width-4), width-1))
+	if !compact {
+		rows = append(rows, inputRow("", width-1))
 	}
 	for i, row := range rows {
 		rail := muted("│")

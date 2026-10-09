@@ -242,6 +242,8 @@ func (m model) openDashboardTask(index int) (tea.Model, tea.Cmd) {
 
 func (m model) updateDashboardMouse(hit hitArea, x, y int) (tea.Model, tea.Cmd) {
 	switch hit.action {
+	case "dashboard-create":
+		return m.createDashboardDraft(), nil
 	case "dashboard-sidebar":
 		return m.updateDashboard(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
 	case "dashboard-scope":

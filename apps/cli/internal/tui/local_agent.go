@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,46 +13,53 @@ import (
 )
 
 type localAgentState struct {
-	open, busy   bool
-	autoSend     bool
-	postsChanged bool
-	input        textField
-	client       *providers.Client
-	marketplace  *providers.Marketplace
-	label        string
-	directory    string
-	usage        string
-	status       string
-	history      []providers.Message
-	lines        []string
-	toolRows     map[string]int
-	render       *localAgentRender
-	files        agentFilePicker
-	streamRow    int
-	streaming    bool
-	phase        string
-	started      time.Time
-	checkpoint   time.Time
-	frame        int
-	thinking     string
-	thinkingAt   int
-	thinkStarted time.Time
-	thinkTime    time.Duration
-	thinkOpen    bool
-	chat         providers.Conversation
-	chatScope    providers.ChatScope
-	storageErr   error
-	sessions     localSessionsState
-	provider     string
-	model        string
-	scroll       int
-	sequence     uint64
-	ctx          context.Context
-	cancel       context.CancelFunc
-	events       chan localAgentUpdate
-	approval     *providers.Approval
-	answer       chan bool
-	err          error
+	open, busy       bool
+	autoSend         bool
+	postsChanged     bool
+	fundingTask      int64
+	workspaceTask    int64
+	input            textField
+	client           *providers.Client
+	marketplace      *providers.Marketplace
+	label            string
+	directory        string
+	usage            string
+	status           string
+	history          []providers.Message
+	lines            []string
+	toolRows         map[string]int
+	render           *localAgentRender
+	files            agentFilePicker
+	streamRow        int
+	streaming        bool
+	phase            string
+	started          time.Time
+	checkpoint       time.Time
+	frame            int
+	thinking         string
+	thinkingAt       int
+	thinkStarted     time.Time
+	thinkTime        time.Duration
+	thinkOpen        bool
+	chat             providers.Conversation
+	chatScope        providers.ChatScope
+	storageErr       error
+	sessions         localSessionsState
+	provider         string
+	model            string
+	scroll           int
+	sequence         uint64
+	ctx              context.Context
+	cancel           context.CancelFunc
+	events           chan localAgentUpdate
+	approval         *providers.Approval
+	approvalGuidance *string
+	approvalInput    textField
+	approvalEditing  bool
+	approvalChoice   int
+	approvalScroll   int
+	answer           chan bool
+	err              error
 }
 
 type localAgentReady struct {
@@ -69,6 +77,7 @@ type localAgentUpdate struct {
 	event    providers.Event
 	leading  []providers.Event
 	approval *providers.Approval
+	guidance *string
 	answer   chan bool
 	done     bool
 	history  []providers.Message
@@ -154,6 +163,9 @@ func (m model) openLocalAgent() (tea.Model, tea.Cmd) {
 		}
 
 		if marketplace != nil {
+			marketplace.SetAccount(m.user)
+			marketplace.FundingUI = true
+			marketplace.Commands = true
 			label += " / Maruvo tools"
 		}
 
@@ -210,6 +222,12 @@ func (m model) waitLocalAgent() tea.Cmd {
 
 func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 	a := &m.localAgent
+	if !a.busy && errors.Is(a.err, providers.ErrToolBatchPaused) {
+		if strings.TrimSpace(a.input.value) == "" {
+			a.input.insert("Continue from the last verified tool result. Do not repeat completed mutations; inspect current task state before proceeding.")
+		}
+		m.workAgent.paused = false
+	}
 	if a.busy || a.client == nil || strings.TrimSpace(a.input.value) == "" {
 		return m, nil
 	}
@@ -232,6 +250,17 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 	a.chat.Pending = true
 	a.chat.Messages = append(a.chat.Messages, providers.ChatMessage{Role: "user", Content: prompt})
 	marketplace := a.marketplace
+	fullAccess := m.hasFullAccess()
+	if m.permissions.remembered == nil {
+		m.permissions.remembered = &sync.Map{}
+	}
+	permissions := m
+	if marketplace != nil {
+		copy := *marketplace
+		copy.FullAccess = fullAccess
+		copy.PermissionMode = permissionModes[m.permissionMode()].name
+		marketplace = &copy
+	}
 	a.sequence++
 	a.busy, a.err, a.scroll, a.status = true, nil, 0, ""
 	a.streaming, a.phase, a.started = false, "Waiting for model", time.Now()
@@ -242,31 +271,90 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 	a.toolRows = make(map[string]int)
 	a.input = textField{limit: 12000, byteLimit: 16000, multiline: true}
 	a.files = agentFilePicker{sequence: a.files.sequence + 1}
-	a.ctx, a.cancel = context.WithTimeout(m.ctx, 5*time.Minute)
+	a.ctx, a.cancel = context.WithCancel(m.ctx)
 	a.events = make(chan localAgentUpdate, 16)
 	ctx, events, sequence := a.ctx, a.events, a.sequence
+	work := m.workAgent
+	worker := work.active && m.isWorker(m.workspace.Post)
+	apiClient, token := m.client, m.token
 
 	go func() {
+		transportCtx := ctx
 		send := func(update localAgentUpdate) bool {
 			update.sequence = sequence
 			select {
 			case events <- update:
 				return true
-			case <-ctx.Done():
+			case <-transportCtx.Done():
 				return false
 			}
 		}
 		approve := func(ctx context.Context, change providers.Approval) (bool, error) {
+			if permissions.permitsAction(change.Action) || permissions.rememberedApproval(change) {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
+				return true, nil
+			}
 			answer := make(chan bool, 1)
-			if !send(localAgentUpdate{approval: &change, answer: answer}) {
+			guidance := ""
+			if worker {
+				_ = apiClient.ReportActivity(ctx, token, work.postID, work.runID, "waiting_for_answer", "Waiting for local action approval")
+			}
+			if !send(localAgentUpdate{approval: &change, answer: answer, guidance: &guidance}) {
 				return false, ctx.Err()
 			}
 
 			select {
 			case approved := <-answer:
+				if worker {
+					_ = apiClient.ReportActivity(ctx, token, work.postID, work.runID, "working", "Local action approval answered")
+				}
+				if !approved && guidance != "" {
+					return false, errors.New("User declined this action. Follow this guidance instead: " + guidance)
+				}
 				return approved, nil
 			case <-ctx.Done():
 				return false, ctx.Err()
+			}
+		}
+		finishActivity := func(bool, bool) {}
+		if worker {
+			if err := apiClient.ReportActivity(ctx, token, work.postID, work.runID, "working", "Built-in task agent executing"); err != nil {
+				send(localAgentUpdate{done: true, err: err})
+				return
+			}
+			workerCtx, stop := context.WithCancel(ctx)
+			defer stop()
+			ctx = workerCtx
+			go func() {
+				ticker := time.NewTicker(15 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-workerCtx.Done():
+						return
+					case <-ticker.C:
+						if err := apiClient.ReportActivity(workerCtx, token, work.postID, work.runID, "", ""); err != nil {
+							stop()
+							return
+						}
+					}
+				}
+			}()
+			finishActivity = func(failed, paused bool) {
+				interrupted := workerCtx.Err() != nil || failed
+				stop()
+				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				state, detail := "waiting_for_answer", "Listening for task updates"
+				if paused {
+					state, detail = "waiting_for_answer", "Tool batch paused; waiting for worker to Continue"
+				}
+				if interrupted {
+					state, detail = "interrupted", "Built-in task agent interrupted"
+				}
+				_ = apiClient.ReportActivity(cleanup, token, work.postID, work.runID, state, detail)
 			}
 		}
 		updated, err := client.RunAgent(
@@ -276,10 +364,15 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 			prompt,
 			approve,
 			func(event providers.Event) {
+				if worker && event.Type == "tool" && event.Status == "running" {
+					detail := []rune(strings.SplitN(event.Text, " · ", 2)[0])
+					_ = apiClient.ReportActivity(ctx, token, work.postID, work.runID, "working", string(detail[:min(1000, len(detail))]))
+				}
 				send(localAgentUpdate{event: event})
 			},
 			marketplace,
 		)
+		finishActivity(err != nil && !errors.Is(err, providers.ErrToolBatchPaused), errors.Is(err, providers.ErrToolBatchPaused))
 		send(localAgentUpdate{done: true, history: updated, err: err})
 	}()
 
@@ -288,6 +381,9 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 
 func (m model) updateLocalAgent(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	a := &m.localAgent
+	if a.approval != nil {
+		return m.updateActionApproval(msg)
+	}
 	if a.sessions.open {
 		return m.updateLocalSessions(msg)
 	}
@@ -310,6 +406,9 @@ func (m model) updateLocalAgent(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
+		if m.workAgent.active {
+			m.stopWorkAgent("Task agent stopped.")
+		}
 		if a.cancel != nil {
 			a.cancel()
 		}
@@ -341,12 +440,20 @@ func (m model) updateLocalAgent(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 		return m, m.saveLocalConversation()
 	case "ctrl+r", "ctrl+h":
+		if m.workAgent.active {
+			m.notice = "Stop the task agent before switching chats."
+			return m, nil
+		}
 		return m.openLocalSessions()
 	case "pgup":
 		a.scroll += max(1, m.height/2)
 	case "pgdown":
 		a.scroll = max(0, a.scroll-max(1, m.height/2))
 	case "ctrl+n":
+		if m.workAgent.active {
+			m.notice = "Stop the task agent before starting a new chat."
+			return m, nil
+		}
 		if !a.busy {
 			return m.newLocalConversation()
 		}
@@ -354,16 +461,6 @@ func (m model) updateLocalAgent(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.thinkOpen = !a.thinkOpen
 		a.scroll = 0
 	default:
-		if a.approval != nil {
-			if msg.String() == "y" || msg.String() == "n" {
-				a.answer <- msg.String() == "y"
-
-				a.approval, a.answer, a.scroll = nil, nil, 0
-			}
-
-			return m, nil
-		}
-
 		if !a.busy {
 			if msg.String() == "enter" {
 				return m.sendLocalPrompt()
@@ -408,4 +505,9 @@ func (m model) localView(title string, rows []string, footer string) tea.View {
 	view.AltScreen = true
 
 	return view
+}
+
+// Task agents keep their transcript in the workspace rather than switching chats.
+func (m model) localAgentVisible() bool {
+	return m.localAgent.open && !(m.workAgent.active && m.screen == workspaceScreen)
 }

@@ -58,6 +58,50 @@ func TestProviderPickerMasksKeysAndPreservesTaskDraft(t *testing.T) {
 	}
 }
 
+func TestStartupProviderSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config providers.Config
+		err    error
+		open   bool
+	}{
+		{name: "missing", open: true},
+		{name: "connected", config: providers.Config{Connections: map[string]providers.Connection{
+			"deepseek": {Model: "deepseek-flash", Storage: "encrypted"},
+		}}},
+		{name: "invalid config", err: errors.New("invalid local provider configuration"), open: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := dashboardFixture()
+			m.dashboard.focus = dashboardPrompt
+			next, _ := m.Update(startupProviderLoaded{config: tc.config, err: tc.err})
+			m = next.(model)
+			if m.providers.open != tc.open || m.providers.busy || m.providers.err != tc.err {
+				t.Fatal("startup provider check did not preserve connection/error state")
+			}
+			if tc.open {
+				next, _ = m.closeProviders()
+				m = next.(model)
+			}
+			if m.dashboard.focus != dashboardPrompt {
+				t.Fatal("provider setup lost prompt focus")
+			}
+		})
+	}
+}
+
+func TestStartupProviderCheckCannotReopenDismissedSetup(t *testing.T) {
+	m := dashboardFixture()
+	next, _ := m.openProviders()
+	m = next.(model)
+	next, _ = m.closeProviders()
+	m = next.(model)
+	next, _ = m.Update(startupProviderLoaded{})
+	if next.(model).providers.open {
+		t.Fatal("stale startup check reopened provider setup")
+	}
+}
+
 func TestLocalAgentApprovalAndCancellation(t *testing.T) {
 	m := dashboardFixture()
 
@@ -75,7 +119,7 @@ func TestLocalAgentApprovalAndCancellation(t *testing.T) {
 		m.width, m.height = size[0], size[1]
 
 		view := ansi.Strip(m.View().Content)
-		if !strings.Contains(view, "Apply output.md? y / n") {
+		if !strings.Contains(view, "output.md") || !strings.Contains(view, "Yes") || !strings.Contains(view, "No") {
 			t.Fatalf("approval path and controls hidden at %dx%d", size[0], size[1])
 		}
 
