@@ -140,6 +140,30 @@ func TestSignSettlement(t *testing.T) {
 	}
 }
 
+func TestRequesterSignsReleaseWithoutLegacyReviewer(t *testing.T) {
+	for _, legacy := range []string{"", testWallet(3).Address()} {
+		t.Run(legacy, func(t *testing.T) {
+			requester, post, plan := settlementFixture(t, "release", "poster")
+			t.Setenv("SOLANA_REVIEWER", legacy)
+			signed, err := requester.SignSettlement(post, plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := base64.StdEncoding.DecodeString(signed)
+			if err != nil || !ed25519.Verify(ed25519.PublicKey(requester.key[32:]), raw[65:], raw[1:65]) {
+				t.Fatal("release must contain a valid requester signature")
+			}
+			if _, err := testWallet(2).SignSettlement(post, plan); err == nil {
+				t.Fatal("worker signed the requester's release")
+			}
+		})
+	}
+	_, post, plan := settlementFixture(t, "release", "independent")
+	if _, err := testWallet(1).SignSettlement(post, plan); err == nil {
+		t.Fatal("requester replaced an existing escrow's reviewer")
+	}
+}
+
 func TestSignSettlementRejectsChangedAuthorityOrPayment(t *testing.T) {
 	cases := []struct {
 		name   string

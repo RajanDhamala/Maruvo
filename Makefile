@@ -1,4 +1,4 @@
-.PHONY: proto api rust cli build build-api build-cli build-rust test migrate-down migrate-up sqlc tui lintapi lintui solana-local solana-build solana-check solana-devnet local devnet web build-web
+.PHONY: proto api rust cli build build-api build-cli build-rust test migrate-down migrate-up sqlc tui lintapi lintui solana-local solana-build solana-check solana-devnet local devnet web build-web work-demo
 
 proto:
 	protoc -I proto \
@@ -69,11 +69,14 @@ build: build-api build-cli build-rust build-web
 
 build-api:
 	mkdir -p bin
-	cd apps/api/cmd/api && go build -mod=readonly -o ../../bin/maruvo-api/cmd/api .
+	go -C apps/api build -mod=readonly -o ../../bin/maruvo-api ./cmd/api
 
 build-cli:
 	mkdir -p bin
 	cd apps/cli && go build -mod=readonly -o ../../bin/maruvo .
+
+work-demo: build-cli
+	python3 scripts/work-demo.py $(ARGS)
 
 build-rust:
 	mkdir -p bin

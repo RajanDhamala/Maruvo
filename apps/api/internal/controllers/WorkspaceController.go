@@ -833,14 +833,7 @@ func (c *Controller) DownloadWorkspaceFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	file, err := c.queries.GetWorkspaceFile(
-		r.Context(),
-		db.GetWorkspaceFileParams{ID: pgtype.UUID{Bytes: fileID, Valid: true}, PostID: id},
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		postJSON(w, 404, map[string]string{"error": "file not found"})
-		return
-	}
+	file, err := c.workspaceDownload(r.Context(), r, id, userID, pgtype.UUID{Bytes: fileID, Valid: true})
 
 	if err != nil {
 		workspaceError(w, err)

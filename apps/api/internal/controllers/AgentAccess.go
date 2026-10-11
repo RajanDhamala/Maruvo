@@ -117,6 +117,10 @@ func agentRequestAllowed(grant utils.AgentAccess, r *http.Request) bool {
 func (c *Controller) Auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if ok && scheme == "Bearer" && strings.HasPrefix(token, workTokenPrefix) {
+			c.workAuth(next, w, r, token)
+			return
+		}
 		if !ok || scheme != "Bearer" || !strings.HasPrefix(token, agentTokenPrefix) {
 			middlewares.Auth(next)(w, r)
 			return

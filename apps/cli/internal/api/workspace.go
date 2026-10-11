@@ -40,6 +40,7 @@ type WorkspaceFile struct {
 }
 
 type WorkspaceState struct {
+	RefundBlocked     bool       `json:"refund_blocked"`
 	DeliveryFiles     []string   `json:"delivery_files"`
 	PostID            int64      `json:"post_id"`
 	LastEventID       int64      `json:"last_event_id"`

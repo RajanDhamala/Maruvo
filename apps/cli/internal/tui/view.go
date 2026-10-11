@@ -38,6 +38,10 @@ func (m model) View() tea.View {
 		return m.remoteView()
 	}
 
+	if m.board.open {
+		return m.boardView()
+	}
+
 	if m.localAgentVisible() {
 		return m.commandView(m.localAgentView())
 	}
@@ -130,6 +134,8 @@ func (m model) frame(body []string, footer string) tea.View {
 	lines := []string{"", "  " + header, "", "  " + tabs, "  " + divider, ""}
 	if m.screen == workspaceScreen {
 		lines = []string{"", "  " + header, "  " + divider, ""}
+	} else if m.screen == detailScreen {
+		lines = []string{""}
 	}
 
 	for i := 0; i < m.bodyHeight(); i++ {
@@ -172,6 +178,13 @@ func (m model) frame(body []string, footer string) tea.View {
 		footer = warning(plain(m.err.Error()))
 	} else if m.notice != "" && m.screen == workspaceScreen {
 		footer = accent(m.notice) + "   " + muted(compactHint(footer, inner))
+	} else if m.screen == detailScreen && width >= 72 && len(m.posts) != 0 &&
+		!m.fundingConfirm && !m.deleting && !m.editingStatus && m.recovering == "" {
+		footer = compactHint(footer, inner)
+		if m.detailScrollMax() > 0 {
+			footer = align(footer, "PgUp/PgDn scroll", inner)
+		}
+		footer = muted(footer)
 	} else {
 		footer = muted(compactHint(footer, inner))
 	}

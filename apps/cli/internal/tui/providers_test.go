@@ -102,6 +102,35 @@ func TestStartupProviderCheckCannotReopenDismissedSetup(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAgentConnectionTracksStartupSaveAndDisconnect(t *testing.T) {
+	config := providers.Config{Active: "deepseek", Connections: map[string]providers.Connection{
+		"deepseek": {Model: "deepseek-flash", Storage: "encrypted"},
+	}}
+	m := dashboardFixture()
+	next, _ := m.Update(startupProviderLoaded{config: config})
+	m = next.(model)
+	if !m.hasConnectedAgent() {
+		t.Fatal("saved connection did not enable workspace agent controls at startup")
+	}
+	m.providers.open = true
+	next, _ = m.Update(providerSaved{sequence: m.providers.sequence, removed: true})
+	m = next.(model)
+	if m.hasConnectedAgent() {
+		t.Fatal("disconnect left work controls enabled")
+	}
+	m.providers.open = true
+	next, _ = m.Update(providerSaved{sequence: m.providers.sequence, config: config})
+	m = next.(model)
+	if !m.hasConnectedAgent() {
+		t.Fatal("new connection did not enable workspace agent controls")
+	}
+	m.providers.open = true
+	next, _ = m.Update(providerSaved{sequence: m.providers.sequence - 1, removed: true})
+	if !next.(model).hasConnectedAgent() {
+		t.Fatal("stale disconnect changed current agent availability")
+	}
+}
+
 func TestLocalAgentApprovalAndCancellation(t *testing.T) {
 	m := dashboardFixture()
 
@@ -112,14 +141,15 @@ func TestLocalAgentApprovalAndCancellation(t *testing.T) {
 
 	m.localAgent = localAgentState{
 		open: true, busy: true, sequence: 3, ctx: ctx, cancel: cancel,
-		approval: &providers.Approval{Path: "output.md", Content: strings.Repeat("Proposed content\n", 80)},
-		answer:   answer,
+		approvalChoice: approvalNo,
+		approval:       &providers.Approval{Path: "output.md", Content: strings.Repeat("Proposed content\n", 80)},
+		answer:         answer,
 	}
 	for _, size := range [][2]int{{48, 16}, {80, 24}, {120, 36}} {
 		m.width, m.height = size[0], size[1]
 
 		view := ansi.Strip(m.View().Content)
-		if !strings.Contains(view, "output.md") || !strings.Contains(view, "Yes") || !strings.Contains(view, "No") {
+		if !strings.Contains(view, "output.md") || !strings.Contains(view, "Accept") || !strings.Contains(view, "No") {
 			t.Fatalf("approval path and controls hidden at %dx%d", size[0], size[1])
 		}
 

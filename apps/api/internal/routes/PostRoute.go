@@ -7,6 +7,12 @@ import (
 )
 
 func PostRoute(app *http.ServeMux, ctrl *controller.Controller) {
+	app.HandleFunc("GET /work/projects", ctrl.Auth(ctrl.WorkProjects))
+	app.HandleFunc("POST /work/projects", ctrl.Auth(ctrl.WorkProjects))
+	app.HandleFunc("GET /work/projects/{project}", ctrl.Auth(ctrl.WorkProject))
+	app.HandleFunc("POST /work/projects/{project}/operations", ctrl.Auth(ctrl.WorkOperation))
+	app.HandleFunc("GET /work/projects/{project}/artifacts/{artifact}", ctrl.Auth(ctrl.WorkDownload))
+	app.HandleFunc("GET /work/projects/{project}/events", ctrl.Auth(ctrl.WorkEvents))
 	app.HandleFunc("GET /ws/work-invites", ctrl.Auth(ctrl.WorkInvites))
 	app.HandleFunc("GET /posts/{id}/agent-ready", ctrl.Auth(ctrl.AgentReadiness))
 	app.HandleFunc("POST /posts/{id}/agent-ready", ctrl.Auth(ctrl.AgentReadiness))

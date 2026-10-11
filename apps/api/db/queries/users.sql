@@ -41,7 +41,8 @@ ORDER BY created_at DESC;
 -- name: FetchPostByLevel :many
 SELECT * from posts WHERE level=$1 AND user_id<>$2 AND status='open'
     AND accepted_by IS NULL AND end_time > NOW()
-    AND (target_worker IS NULL OR target_worker = $2) ORDER BY created_at DESC;
+    AND (target_worker IS NULL OR target_worker = $2)
+    AND (visibility = 'public' OR target_worker = $2) ORDER BY created_at DESC;
 
 
 -- name: DeleteYourPost :execrows

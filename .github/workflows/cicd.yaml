@@ -14,19 +14,28 @@ concurrency:
 
 jobs:
   build:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/cli/go.mod
           cache-dependency-path: |
             apps/api/go.sum
             apps/cli/go.sum
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/web/package.json
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.22.0"
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Build website
+        run: make build-web
 
       - name: Build frontend (Bubble Tea CLI)
         run: make build-cli

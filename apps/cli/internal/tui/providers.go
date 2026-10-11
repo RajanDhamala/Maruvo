@@ -67,7 +67,13 @@ type providerModelsLoaded struct {
 type providerSaved struct {
 	sequence uint64
 	removed  bool
+	config   providers.Config
 	err      error
+}
+
+func (m model) hasConnectedAgent() bool {
+	config := m.agentConfig
+	return config.Active != "" && config.Connections[config.Active].Model != ""
 }
 
 func providerLabel(name string) string {
@@ -252,7 +258,11 @@ func (m model) saveProvider() (tea.Model, tea.Cmd) {
 
 	return m, func() tea.Msg {
 		err := providers.SaveConnection(profile, name, id, secret, options)
-		return providerSaved{sequence: sequence, err: err}
+		config, loadErr := providers.LoadConfig(profile)
+		if err == nil {
+			err = loadErr
+		}
+		return providerSaved{sequence: sequence, config: config, err: err}
 	}
 }
 
@@ -315,7 +325,12 @@ func (m model) updateProviders(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		p.key, p.secret = textField{limit: 4096}, ""
 
 		return m, func() tea.Msg {
-			return providerSaved{sequence: sequence, removed: true, err: providers.Disconnect(profile, name)}
+			err := providers.Disconnect(profile, name)
+			config, loadErr := providers.LoadConfig(profile)
+			if err == nil {
+				err = loadErr
+			}
+			return providerSaved{sequence: sequence, removed: true, config: config, err: err}
 		}
 	default:
 		if p.step == providerKey {

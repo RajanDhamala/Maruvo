@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func toolDisplayText(value string) string {
@@ -130,6 +132,14 @@ func toolOutcome(name, result string) string {
 		return fmt.Sprintf("%d %s", count, label)
 	case "write_file":
 		return "Saved after approval"
+	case "run_command":
+		var output struct {
+			ExitCode int `json:"exit_code"`
+		}
+		if json.Unmarshal([]byte(result), &output) == nil {
+			return fmt.Sprintf("Exit %d", output.ExitCode)
+		}
+		return "Completed"
 	case "create_post", "accept_post":
 		var post struct {
 			ID int64 `json:"id"`
@@ -141,4 +151,51 @@ func toolOutcome(name, result string) string {
 	default:
 		return "Completed"
 	}
+}
+
+func toolPreview(call ToolCall, result string) string {
+	switch call.Function.Name {
+	case "read_file", "list_files":
+		return result
+	case "write_file":
+		var args struct {
+			Content string `json:"content"`
+		}
+		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+		return args.Content
+	case "run_command":
+		var output struct {
+			Output    string `json:"output"`
+			Truncated bool   `json:"truncated"`
+		}
+		if json.Unmarshal([]byte(result), &output) == nil {
+			if output.Truncated {
+				output.Output += "\n… output truncated"
+			}
+			return output.Output
+		}
+	}
+	return ""
+}
+
+func shortToolPreview(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, ansi.Strip(value))
+	lines := strings.Split(strings.TrimRight(value, "\n"), "\n")
+	more := len(lines) > 5
+	lines = lines[:min(5, len(lines))]
+	for i, line := range lines {
+		chars := []rune(line)
+		if len(chars) > 140 {
+			lines[i] = string(chars[:139]) + "…"
+		}
+	}
+	if more {
+		lines = append(lines, "… preview truncated")
+	}
+	return strings.Join(lines, "\n")
 }

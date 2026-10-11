@@ -20,6 +20,7 @@ import (
 	"github.com/rajandhamala/Maruvo/cli/internal/providers"
 	"github.com/rajandhamala/Maruvo/cli/internal/tui"
 	walletconfig "github.com/rajandhamala/Maruvo/cli/internal/wallet"
+	"github.com/rajandhamala/Maruvo/cli/internal/work"
 )
 
 func main() {
@@ -72,7 +73,7 @@ func main() {
 	args := flags.Args()
 
 	bridgeMode := len(args) > 1 && args[0] == "agent" && args[1] == "bridge"
-	if command != "provider" && command != "chat" && !bridgeMode {
+	if command != "provider" && command != "chat" && command != "work" && !bridgeMode {
 		if err := walletconfig.LoadConfig(); err != nil {
 			fail(fmt.Errorf("load local Solana configuration: %w", err))
 		}
@@ -138,7 +139,7 @@ func main() {
 		fail(agent.InvalidArgument(err.Error()))
 	}
 
-	if !*check && !*demo && !listTools && !bridgeMode {
+	if !*check && !*demo && !listTools && !bridgeMode && command != "work" {
 		chosen := *wallet
 		if chosen == "" {
 			chosen = explicitWallet
@@ -178,10 +179,10 @@ func main() {
 	var runErr error
 
 	if len(args) > 0 {
-		if args[0] != "agent" {
+		if args[0] != "agent" && args[0] != "work" {
 			fmt.Fprintln(
 				os.Stderr,
-				"unknown command; use agent, provider, chat, or run without a command for the terminal UI",
+				"unknown command; use agent, work, provider, chat, or run without a command for the terminal UI",
 			)
 			os.Exit(1)
 		}
@@ -189,7 +190,11 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
-		runErr = agent.Run(ctx, api.NewClient(*apiURL), *profile, args[1:], os.Stdout, os.Stderr)
+		if args[0] == "work" {
+			runErr = work.Run(ctx, api.NewClient(*apiURL), *profile, args[1:], os.Stdout, os.Stderr)
+		} else {
+			runErr = agent.Run(ctx, api.NewClient(*apiURL), *profile, args[1:], os.Stdout, os.Stderr)
+		}
 	} else {
 		runErr = run(*apiURL, *message, *check, *demo, *profile)
 	}
@@ -200,7 +205,8 @@ func main() {
 }
 
 func agentInvocation(args []string) bool {
-	return commandInvocation(args) == "agent"
+	command := commandInvocation(args)
+	return command == "agent" || command == "work"
 }
 
 func commandInvocation(args []string) string {

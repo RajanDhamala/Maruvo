@@ -30,7 +30,7 @@ func (q *Queries) GetRemoteActivity(ctx context.Context, postID int64) (RemoteAc
 }
 
 const remoteInbox = `-- name: RemoteInbox :many
-SELECT p.id, p.user_id, p.title, p.cost_lamports, p.end_time, p.status, p.level, p.created_at, p.updated_at, p.accepted_by, p.accepted_at, p.poster_wallet, p.worker_wallet, p.description, p.acceptance_criteria, p.input_files, p.expected_outputs, p.reopened_as, p.funding_window_seconds, p.fund_by, p.deliver_by, p.review_window_seconds, p.target_worker FROM posts p
+SELECT p.id, p.user_id, p.title, p.cost_lamports, p.end_time, p.status, p.level, p.created_at, p.updated_at, p.accepted_by, p.accepted_at, p.poster_wallet, p.worker_wallet, p.description, p.acceptance_criteria, p.input_files, p.expected_outputs, p.reopened_as, p.funding_window_seconds, p.fund_by, p.deliver_by, p.review_window_seconds, p.target_worker, p.visibility FROM posts p
 WHERE p.user_id = $1 OR p.accepted_by = $1
     OR (p.target_worker = $1 AND p.status = 'open' AND p.end_time > NOW())
     OR EXISTS(SELECT 1 FROM post_escrows e JOIN wallets w ON w.address = e.reviewer
@@ -71,6 +71,7 @@ func (q *Queries) RemoteInbox(ctx context.Context, userID int64) ([]Post, error)
 			&i.DeliverBy,
 			&i.ReviewWindowSeconds,
 			&i.TargetWorker,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}

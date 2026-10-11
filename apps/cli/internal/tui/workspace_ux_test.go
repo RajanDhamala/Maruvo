@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
+	"github.com/rajandhamala/Maruvo/cli/internal/providers"
 )
 
 func TestWorkspaceCommandsPreserveAttachmentsAndReturnToPrompt(t *testing.T) {
@@ -43,6 +44,87 @@ func TestWorkspaceCommandsPreserveAttachmentsAndReturnToPrompt(t *testing.T) {
 		m = next.(model)
 		if name == "/new" && (!m.localAgent.open || m.localAgent.input.value != "") {
 			t.Fatal("new must start an agent conversation")
+		}
+	}
+}
+
+func workspaceAgentControlsFixture(t *testing.T, requester, connected bool) model {
+	t.Helper()
+	m := chatModel()
+	worker := int64(1)
+	m.ctx, m.workspaceCtx, m.token = t.Context(), t.Context(), "fixture"
+	m.user.ID = "1"
+	if requester {
+		m.user.ID = "3"
+	}
+	m.workspace.Post.UserID, m.workspace.Post.AcceptedBy = 3, &worker
+	m.posts = []api.Post{m.workspace.Post}
+	if connected {
+		m.agentConfig = providers.Config{Active: "deepseek", Connections: map[string]providers.Connection{
+			"deepseek": {Model: "deepseek-flash", Storage: "encrypted"},
+		}}
+	}
+	m.composer.draft.value = "Check the task and report progress"
+	m.composer.attachments = []localFile{{path: "/tmp/notes.txt"}}
+	return m
+}
+
+func TestWorkspaceAgentButtonsSeparateLocalWorkAndInvitations(t *testing.T) {
+	for _, requester := range []bool{false, true} {
+		for _, size := range [][2]int{{48, 16}, {80, 24}, {120, 36}, {168, 48}} {
+			for _, action := range []string{"workspace-agent", "workspace-invite"} {
+				m := workspaceAgentControlsFixture(t, requester, true)
+				m.width, m.height = size[0], size[1]
+				view := ansi.Strip(m.View().Content)
+				for _, label := range []string{"Start my agent", "Invite both agents"} {
+					if !strings.Contains(view, label) {
+						t.Fatalf("missing %s at %v requester=%v", label, size, requester)
+					}
+				}
+				for _, row := range strings.Split(view, "\n") {
+					if ansi.StringWidth(row) > size[0] {
+						t.Fatalf("agent buttons overflow at %v", size)
+					}
+				}
+				found := false
+				for _, hit := range m.chatLayout().hits {
+					if hit.action != action {
+						continue
+					}
+					found = true
+					next, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: m.contentX() + hit.x + 1, Y: m.bodyStart() + hit.y})
+					m = next.(model)
+					if cmd == nil || len(m.composer.attachments) != 1 || m.composer.draft.value != "" || m.screen != workspaceScreen {
+						t.Fatal("agent control lost the workspace or failed to apply its instruction")
+					}
+					if action == "workspace-agent" {
+						if !m.workAgent.active || m.workSetup.open || m.workSetup.armed || m.workSetup.invite || m.workAgent.instruction != "Check the task and report progress" {
+							t.Fatal("local start sent an invitation or waited for the other participant")
+						}
+					} else if m.workAgent.active || !m.workSetup.open || !m.workSetup.invite || m.workSetup.armed {
+						t.Fatal("invitation started an agent before setup and peer acceptance")
+					}
+					break
+				}
+				if !found {
+					t.Fatalf("missing clickable %s at %v", action, size)
+				}
+			}
+		}
+	}
+}
+
+func TestWorkspaceWithoutAgentOffersConnectionAndCannotStartOrInvite(t *testing.T) {
+	for _, action := range []string{"workspace-agent", "workspace-invite", "workspace-connect-agent"} {
+		m := workspaceAgentControlsFixture(t, false, false)
+		view := ansi.Strip(m.View().Content)
+		if !strings.Contains(view, "Connect agent") || strings.Contains(view, "Start my agent") || strings.Contains(view, "Invite both agents") {
+			t.Fatal("account without an agent exposed work controls")
+		}
+		next, _ := m.workspaceCommand(action)
+		m = next.(model)
+		if !m.providers.open || m.workAgent.active || m.workSetup.open || m.workSetup.invite || m.composer.draft.value != "Check the task and report progress" {
+			t.Fatal("missing-agent control started work, invited a peer or discarded the draft")
 		}
 	}
 }

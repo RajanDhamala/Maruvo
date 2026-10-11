@@ -24,16 +24,17 @@ type Approval struct {
 }
 
 type Event struct {
-	Type   string `json:"event"`
-	Text   string `json:"text,omitempty"`
-	ToolID string `json:"tool_id,omitempty"`
-	Status string `json:"status,omitempty"`
-	PostID int64  `json:"post_id,omitempty"`
+	Type    string `json:"event"`
+	Text    string `json:"text,omitempty"`
+	Preview string `json:"preview,omitempty"`
+	ToolID  string `json:"tool_id,omitempty"`
+	Status  string `json:"status,omitempty"`
+	PostID  int64  `json:"post_id,omitempty"`
 }
 
 type Approve func(context.Context, Approval) (bool, error)
 
-var ErrToolBatchPaused = errors.New("Tool batch paused. Continue to resume; permissions have no request limit.")
+var ErrToolBatchPaused = errors.New("Tool batch limit reached (12 model rounds). Continue to resume.")
 
 func localTools() []Tool {
 	return []Tool{
@@ -434,10 +435,10 @@ func (c *Client) RunAgent(
 			}
 
 			describe := func(status, detail string) Event {
-				event := describeTool(call, status, detail)
-				event.Text = marketplace.redact(strings.ReplaceAll(event.Text, c.key, "[API key redacted]"))
-
-				return event
+				display := call
+				display.Function.Arguments = marketplace.redact(strings.ReplaceAll(display.Function.Arguments, c.key, "[API key redacted]"))
+				detail = marketplace.redact(strings.ReplaceAll(detail, c.key, "[API key redacted]"))
+				return describeTool(display, status, detail)
 			}
 			emit(describe("running", ""))
 
@@ -506,10 +507,23 @@ func (c *Client) RunAgent(
 			status, detail := "succeeded", toolOutcome(call.Function.Name, result)
 			if toolErr != nil {
 				status, detail = "failed", result
+			} else if call.Function.Name == "run_command" {
+				var output struct {
+					ExitCode int `json:"exit_code"`
+				}
+				if json.Unmarshal([]byte(result), &output) == nil && output.ExitCode != 0 {
+					status = "failed"
+				}
 			}
 
 			detail += " · " + time.Since(started).Round(time.Millisecond).String()
-			emit(describe(status, detail))
+			event := describe(status, detail)
+			if toolErr == nil {
+				preview := toolPreview(call, result)
+				preview = marketplace.redact(strings.ReplaceAll(preview, c.key, "[API key redacted]"))
+				event.Preview = shortToolPreview(preview)
+			}
+			emit(event)
 
 			history = append(history, Message{Role: "tool", ToolCallID: call.ID, Content: result})
 		}

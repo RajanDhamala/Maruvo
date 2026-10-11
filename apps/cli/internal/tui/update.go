@@ -14,6 +14,61 @@ import (
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case boardLoaded:
+		if m.board.open && msg.generation == m.board.generation && msg.token == m.token {
+			m.board.busy = false
+			m.board.err = msg.err
+			if msg.err == nil {
+				if msg.project.ID != "" {
+					m.board.project = msg.project
+					m.board.selection = min(m.board.selection, max(0, len(msg.project.Assignments)-1))
+				} else {
+					m.board.projects = msg.projects
+					m.board.selection = min(m.board.selection, max(0, len(msg.projects)-1))
+				}
+			}
+			return m, m.boardTick()
+		}
+		return m, nil
+	case boardChanged:
+		if m.board.open && msg.generation == m.board.generation && msg.token == m.token {
+			m.board.busy = false
+			m.board.cancel = nil
+			m.board.err = msg.err
+			if msg.err == nil {
+				m.board.action = ""
+				m.board.pending = nil
+				m.board.busy = true
+				return m, m.fetchBoard()
+			}
+		}
+		return m, nil
+	case boardClock:
+		if m.board.open && msg.generation == m.board.generation {
+			if !m.board.busy && m.board.action == "" {
+				m.board.busy = true
+				return m, m.fetchBoard()
+			}
+			return m, m.boardTick()
+		}
+		return m, nil
+	case boardTask:
+		if m.board.open && msg.generation == m.board.generation && msg.token == m.token {
+			m.board.busy = false
+			m.board.err = msg.err
+			if msg.err == nil {
+				m.board.open = false
+				m.board.generation++
+				m.posts = []api.Post{msg.info.Post}
+				m.selected = 0
+				m.screen = detailScreen
+				m.escrow = msg.info.Escrow
+				m.own = m.isPoster(msg.info.Post)
+				return m, nil
+			}
+		}
+		return m, nil
+
 	case inviteConnected:
 		if msg.generation != m.invitations.generation {
 			msg.stream.Close()
@@ -113,8 +168,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.MouseClickMsg:
-		if m.invitations.pending != nil || m.permissions.open || (m.localAgent.open && m.localAgent.approval != nil) {
+		if m.invitations.pending != nil || m.workSetup.open || m.permissions.open {
 			return m, nil
+		}
+		if m.localAgent.open && m.localAgent.approval != nil && !m.shortcutsOpen {
+			return m.updateActionApprovalMouse(msg)
+		}
+		if m.board.open {
+			return m.updateBoardMouse(msg)
 		}
 		if m.agentControls.open {
 			return m, nil
@@ -143,6 +204,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m.updateMouse(msg)
 	case tea.MouseWheelMsg:
+		if m.invitations.pending != nil || m.workSetup.open || m.permissions.open {
+			return m, nil
+		}
+		if m.localAgent.open && m.localAgent.approval != nil && !m.shortcutsOpen {
+			if msg.Button == tea.MouseWheelUp {
+				return m.updateActionApproval(tea.KeyPressMsg{Code: tea.KeyPgUp})
+			}
+			if msg.Button == tea.MouseWheelDown {
+				return m.updateActionApproval(tea.KeyPressMsg{Code: tea.KeyPgDown})
+			}
+			return m, nil
+		}
 		if m.agentControls.open {
 			if msg.Button == tea.MouseWheelUp {
 				return m.updateAgentControls(tea.KeyPressMsg{Code: tea.KeyUp})
@@ -250,6 +323,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.board.open {
+			if m.board.action != "" && m.board.focus < len(m.board.fields) && !m.board.busy {
+				m.board.fields[m.board.focus].insert(msg.Content)
+				m.board.pending = nil
+			}
+			return m, nil
+		}
 		if m.agentControls.open {
 			return m, nil
 		}
@@ -335,6 +415,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			if m.board.cancel != nil {
+				m.board.cancel()
+			}
 			m.localAgent.finishStream(true)
 
 			if m.localAgent.cancel != nil {
@@ -363,6 +446,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.invitations.pending != nil {
 			return m.updateInvite(msg)
 		}
+		if m.workSetup.open {
+			return m.updateWorkSetup(msg)
+		}
+		if m.permissions.open {
+			return m.updatePermissions(msg)
+		}
+		if m.localAgent.open && m.localAgent.approval != nil {
+			return m.updateActionApproval(msg)
+		}
+		if m.board.open {
+			return m.updateBoard(msg)
+		}
 		if m.agentControls.open {
 			return m.updateAgentControls(msg)
 		}
@@ -376,13 +471,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.remote.open {
 			return m.updateRemote(msg)
 		}
-		if m.permissions.open {
-			return m.updatePermissions(msg)
-		}
-		if m.workSetup.open {
-			return m.updateWorkSetup(msg)
-		}
-
 		if m.providers.open {
 			return m.updateProviders(msg)
 		}
@@ -443,6 +531,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.sequence != m.providers.sequence || m.providers.open {
 			return m, nil
 		}
+		if msg.err == nil {
+			m.agentConfig = msg.config
+		}
 		if msg.err != nil || len(msg.config.Connections) == 0 {
 			m.providers = providerSettings{
 				open: true, sequence: m.providers.sequence + 1,
@@ -454,6 +545,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case providerConfigLoaded:
 		if m.providers.open && msg.sequence == m.providers.sequence {
 			m.providers.busy, m.providers.config, m.providers.err = false, msg.config, msg.err
+			if msg.err == nil {
+				m.agentConfig = msg.config
+			}
 			for i, name := range providers.Names {
 				if name == msg.config.Active {
 					m.providers.provider, m.providers.selection = i, i
@@ -490,6 +584,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if msg.err == nil {
+				m.agentConfig = msg.config
 				m.providers = providerSettings{sequence: m.providers.sequence + 1}
 
 				m.notice = "Provider connected. Open /agent to use the CLI agent."
@@ -546,7 +641,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.workAgent.active {
 				if errors.Is(msg.err, providers.ErrToolBatchPaused) {
 					m.workAgent.paused = true
-					m.workAgent.status = "Paused · Continue in agent chat"
+					m.workAgent.status = "Batch complete · continuing automatically"
+					if !m.hasFullAccess() {
+						m.workAgent.status = "Batch limit reached · Continue agent or /continue"
+					}
 				} else if msg.err != nil {
 					m.stopWorkAgent("Task agent paused: " + msg.err.Error())
 				} else {
@@ -598,9 +696,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.waitLocalAgent()
 		}
 		if msg.approval != nil {
-			m.localAgent.approvalChoice = 2
+			m.commands.open, m.shortcutsOpen = false, false
+			if m.workAgent.active {
+				m.workAgent.status = "Waiting for your approval"
+			}
 			m.localAgent.approval, m.localAgent.answer, m.localAgent.scroll = msg.approval, msg.answer, 0
-			m.localAgent.approvalChoice, m.localAgent.approvalScroll = 2, 0
+			m.localAgent.approvalChoice, m.localAgent.approvalScroll = approvalNo, 0
 			m.localAgent.approvalGuidance = msg.guidance
 			m.localAgent.approvalEditing = false
 			m.localAgent.approvalInput = textField{limit: 2000, byteLimit: 8000}

@@ -290,7 +290,7 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 			}
 		}
 		approve := func(ctx context.Context, change providers.Approval) (bool, error) {
-			if permissions.permitsAction(change.Action) || permissions.rememberedApproval(change) {
+			if permissions.permitsAction(change.Action) {
 				if err := ctx.Err(); err != nil {
 					return false, err
 				}
@@ -350,6 +350,9 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 				state, detail := "waiting_for_answer", "Listening for task updates"
 				if paused {
 					state, detail = "waiting_for_answer", "Tool batch paused; waiting for worker to Continue"
+					if permissions.permitsAction("Run command") {
+						state, detail = "working", "Tool batch complete; continuing automatically"
+					}
 				}
 				if interrupted {
 					state, detail = "interrupted", "Built-in task agent interrupted"
@@ -364,9 +367,8 @@ func (m model) sendLocalPrompt() (tea.Model, tea.Cmd) {
 			prompt,
 			approve,
 			func(event providers.Event) {
-				if worker && event.Type == "tool" && event.Status == "running" {
-					detail := []rune(strings.SplitN(event.Text, " · ", 2)[0])
-					_ = apiClient.ReportActivity(ctx, token, work.postID, work.runID, "working", string(detail[:min(1000, len(detail))]))
+				if worker && event.Type == "tool" {
+					_ = apiClient.ReportActivity(ctx, token, work.postID, work.runID, "working", toolActivityDetail(event))
 				}
 				send(localAgentUpdate{event: event})
 			},

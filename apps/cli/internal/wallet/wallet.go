@@ -156,9 +156,8 @@ func (w *Wallet) SignFunding(post api.Post, plan api.Escrow) (string, error) {
 		return "", errors.New("funding transaction does not match the accepted post")
 	}
 
-	reviewer := os.Getenv("SOLANA_REVIEWER")
-	if reviewer == "" || reviewer != plan.Reviewer {
-		return "", errors.New("reviewer does not match your local Solana configuration")
+	if err := validateReviewer(plan.Reviewer, post.PosterWallet); err != nil {
+		return "", err
 	}
 
 	return w.signTransaction(data)

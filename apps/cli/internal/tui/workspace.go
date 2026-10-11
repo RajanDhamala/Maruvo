@@ -59,6 +59,7 @@ func (m *model) stopWorkspace() {
 	m.stream, m.workspaceCancel, m.workspaceCtx = nil, nil, nil
 	m.workspaceAction, m.reviewConfirm, m.workspaceReview = "", false, false
 	m.workspacePendingAction = ""
+	m.activityExpanded = nil
 	m.presence = nil
 	m.reviewVersion = 0
 }
@@ -277,12 +278,19 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) bool {
 		ReviewState       string     `json:"review_state"`
 		Purpose           string     `json:"purpose"`
 		DeliveryFiles     []string   `json:"delivery_files"`
+		RefundBlocked     bool       `json:"refund_blocked"`
 	}
 	if json.Unmarshal(event.Data, &data) != nil {
 		return false
 	}
 
 	switch event.Kind {
+	case "file.accessed":
+		m.workspace.State.RefundBlocked = m.workspace.State.RefundBlocked || data.RefundBlocked
+		if m.workspace.State.RefundBlocked && m.workspaceAction == "x" {
+			m.workspaceAction, m.reviewConfirm = "", false
+			m.err = errors.New("Worker file access recorded. Refunds through Maruvo are blocked pending dispute resolution.")
+		}
 	case "agent.control":
 		var control api.AgentControl
 		if json.Unmarshal(event.Data, &control) == nil && control.OwnerID == parseUser(m.user.ID) &&
@@ -435,10 +443,27 @@ func (m model) updateWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "workspace-continue":
+		return m.continueWorkAgent()
 	case "workspace-agent":
 		if m.workAgent.active || m.workSetup.armed {
 			m.stopWorkAgent("Your agent stopped.")
 			return m, m.saveLocalConversation()
+		}
+		if !m.hasConnectedAgent() {
+			return m.openProviders()
+		}
+		next, cmd := m.startWorkAgent(strings.TrimSpace(m.composer.draft.value))
+		m = next.(model)
+		if m.workAgent.active {
+			m.composer.draft = textField{limit: 4000}
+		}
+		return m, cmd
+	case "workspace-connect-agent":
+		return m.openProviders()
+	case "workspace-invite":
+		if !m.hasConnectedAgent() {
+			return m.openProviders()
 		}
 		next, cmd := m.openWorkSetup(strings.TrimSpace(m.composer.draft.value))
 		m = next.(model)
@@ -482,14 +507,32 @@ func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.workspaceFiles {
 			m.fileSelection = max(0, m.fileSelection-1)
+		} else if m.workspaceReview {
+			m.activityScroll = max(0, m.activityScroll-1)
 		} else {
 			m.activityScroll++
 		}
 	case "down", "j":
 		if m.workspaceFiles {
 			m.fileSelection = min(max(0, len(m.workspace.Files)-1), m.fileSelection+1)
+		} else if m.workspaceReview {
+			m.activityScroll = min(m.reviewMaxScroll(), m.activityScroll+1)
 		} else {
 			m.activityScroll = max(0, m.activityScroll-1)
+		}
+	case "pgup", "pgdown", "home", "end":
+		if m.workspaceReview {
+			limit := m.reviewMaxScroll()
+			switch key {
+			case "pgup":
+				m.activityScroll = max(0, m.activityScroll-m.reviewBodyHeight())
+			case "pgdown":
+				m.activityScroll = min(limit, m.activityScroll+m.reviewBodyHeight())
+			case "home":
+				m.activityScroll = 0
+			case "end":
+				m.activityScroll = limit
+			}
 		}
 	case "m":
 		m.workspaceFiles, m.workspaceReview = false, false
@@ -513,6 +556,10 @@ func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 
 		m.workspaceAction, m.workspaceInput, m.err, m.notice = key, textField{limit: 4000}, nil, ""
 	case "a", "x", "e":
+		if key == "x" && m.workspace.State.RefundBlocked {
+			m.err = errors.New("Worker file access recorded. Refunds through Maruvo are blocked pending dispute resolution.")
+			return m, nil
+		}
 		if !m.canReviewAction(key) {
 			m.err = errors.New("Reviewer wallet approval is required; payout needs submitted, funded work.")
 			return m, nil
@@ -632,6 +679,11 @@ func (m model) workspaceLayout() postLayout {
 		}
 
 		l.rows = append(l.rows, "", bold(label), m.workspaceInput.input(width, true), "")
+		if m.workspaceAction == "d" && m.protectedFileDownload(m.fileSelection) {
+			for _, row := range reviewTextRows("Access is recorded before transfer; downloading blocks unilateral refunds in Maruvo. It does not approve payment.", width) {
+				l.rows = append(l.rows, muted(row))
+			}
+		}
 		l.buttons([]string{buttonLabel, "Cancel"}, []string{"workspace-send", "cancel"})
 
 		l.footer = "Enter confirm   Esc cancel"
@@ -657,7 +709,7 @@ func (m model) workspaceLayout() postLayout {
 
 	l.rows = append(l.rows, "")
 	if m.workspaceReview {
-		return m.reviewLayout(l)
+		return m.reviewLayout()
 	}
 
 	if m.workspaceFiles {
@@ -725,6 +777,15 @@ func (m model) downloadWorkspaceFile(index int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) protectedFileDownload(index int) bool {
+	if index < 0 || index >= len(m.workspace.Files) || m.isWorker(m.workspace.Post) {
+		return false
+	}
+	file := m.workspace.Files[index]
+	worker := m.workspace.Post.AcceptedBy
+	return worker != nil && file.UploadedBy == *worker && file.Purpose != "input"
+}
+
 func (m model) eventLabel(event api.WorkspaceEvent) string {
 	actor := "System"
 	if event.ActorID != nil {
@@ -735,13 +796,14 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 	}
 
 	var data struct {
-		Text      string `json:"text"`
-		Name      string `json:"name"`
-		Note      string `json:"note"`
-		State     string `json:"state"`
-		Status    string `json:"status"`
-		Stage     string `json:"stage"`
-		AgentName string `json:"agent_name"`
+		Text          string `json:"text"`
+		Name          string `json:"name"`
+		Note          string `json:"note"`
+		State         string `json:"state"`
+		Status        string `json:"status"`
+		Stage         string `json:"stage"`
+		AgentName     string `json:"agent_name"`
+		RefundBlocked bool   `json:"refund_blocked"`
 	}
 
 	_ = json.Unmarshal(event.Data, &data)
@@ -780,6 +842,12 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 		return actor + ": " + plain(data.Text)
 	case "file.shared":
 		return actor + " shared " + plain(data.Name)
+	case "file.accessed":
+		label := actor + " accessed " + plain(data.Name)
+		if data.RefundBlocked {
+			label += " · refunds blocked in Maruvo"
+		}
+		return label
 	case "work.submitted":
 		return actor + " submitted work: " + plain(data.Note)
 	case "review.changes_requested":

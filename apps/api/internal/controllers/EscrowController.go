@@ -269,6 +269,13 @@ func (c *Controller) PostInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if post.Visibility == "private" && post.UserID != userID &&
+		(!post.TargetWorker.Valid || post.TargetWorker.Int64 != userID) &&
+		(!post.AcceptedBy.Valid || post.AcceptedBy.Int64 != userID) {
+		postJSON(w, 404, map[string]string{"error": "post not found"})
+		return
+	}
+
 	if post.UserID != userID && post.Status != db.PostStatusOpen &&
 		!workspaceAccess(w, r, q, post, nil, userID) {
 		return
@@ -381,6 +388,10 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 	plan, err := pb.NewSolanaServiceClient(c.rpc).PrepareEscrow(ctx, agreement(post, version))
 	if err != nil {
 		escrowError(w, err)
+		return
+	}
+	if plan.Reviewer != post.PosterWallet {
+		postJSON(w, 502, map[string]string{"error": "funding reviewer must be the requester wallet; restart the Rust service"})
 		return
 	}
 

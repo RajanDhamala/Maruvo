@@ -64,6 +64,57 @@ func TestRemoteStopCancelsMatchingAgentOnly(t *testing.T) {
 	}
 }
 
+func TestRemoteStopAllowsNewInvitationAcceptance(t *testing.T) {
+	nonce := strings.Repeat("a", 32)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	answer := make(chan bool, 1)
+	m := model{
+		ctx: t.Context(), screen: workspaceScreen,
+		workAgent: workspaceAgent{active: true, pending: true, postID: 13, generation: 2},
+		workSetup: workSetup{armed: true, postID: 13, pair: nonce + ":" + strings.Repeat("b", 32)},
+		localAgent: localAgentState{
+			open: true, busy: true, sequence: 7, ctx: ctx, cancel: cancel,
+			approval: &providers.Approval{Action: "Run command"}, answer: answer,
+		},
+	}
+	m.localAgent.applyEvent(providers.Event{Type: "assistant_delta", Text: "Incomplete work"})
+	m.applyInvitation(workInvitation{PostID: 13, Nonce: nonce, Cancelled: true})
+	if ctx.Err() == nil || m.workAgent.active || m.workAgent.pending || m.workSetup.armed ||
+		m.localAgent.open || m.localAgent.busy || m.localAgent.approval != nil || m.localAgent.answer != nil {
+		t.Fatal("remote stop left the cancelled agent or its approval active")
+	}
+	if m.localAgent.streaming || !strings.Contains(m.localAgent.lines[0], "incomplete answer") {
+		t.Fatal("remote stop did not mark the partial response as interrupted")
+	}
+	select {
+	case <-answer:
+		t.Fatal("remote stop answered the pending approval")
+	default:
+	}
+
+	m.applyInvitation(workInvitation{PostID: 13, Nonce: strings.Repeat("c", 32)})
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(model)
+	if cmd == nil || !m.invitations.busy || m.invitations.pending == nil {
+		t.Fatal("Enter could not accept a fresh invitation after remote stop")
+	}
+
+	m.localAgent.open, m.localAgent.busy = true, true
+	for _, msg := range []tea.Msg{
+		localAgentReady{sequence: 7, label: "old model"},
+		localAgentUpdate{sequence: 7, approval: &providers.Approval{Action: "Old command"}, answer: answer},
+		localAgentUpdate{sequence: 7, done: true, err: context.Canceled},
+	} {
+		next, cmd = m.Update(msg)
+		m = next.(model)
+		if cmd != nil || !m.localAgent.busy || m.localAgent.approval != nil ||
+			m.localAgent.err != nil || m.localAgent.label == "old model" {
+			t.Fatal("cancelled session changed the next agent session")
+		}
+	}
+}
+
 func TestPeerStatusCannotBecomeAnInvitationOrChangeAnotherSession(t *testing.T) {
 	nonce := strings.Repeat("a", 32)
 	m := model{workAgent: workspaceAgent{active: true, postID: 5}, workSetup: workSetup{postID: 5, pair: strings.Repeat("b", 32) + ":" + nonce}}

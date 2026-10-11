@@ -147,6 +147,9 @@ func (m model) startAttachment() (tea.Model, tea.Cmd) {
 
 func (m model) updateComposer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if msg.Keystroke() == "alt+a" {
+		key = "alt+a"
+	}
 
 	c := &m.composer
 	if c.completing {
@@ -186,6 +189,26 @@ func (m model) updateComposer(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+s":
 		return m.workspaceCommand("s")
+	case "alt+a":
+		for i := len(m.workspace.Events) - 1; i >= 0; i-- {
+			if m.workspace.Events[i].Kind == "agent.activity" {
+				end := i + 1
+				for i > 0 && sameActivityActor(m.workspace.Events[i], m.workspace.Events[i-1]) {
+					i--
+				}
+				rows := m.activityRows(i, end, m.contentWidth())
+				for j := len(rows) - 1; j >= 0; j-- {
+					if rows[j].activity {
+						if rows[j].activityTool {
+							return m.toggleWorkspaceTool(rows[j].activityIndex)
+						}
+						return m.toggleWorkspaceActivity(i)
+					}
+				}
+				return m.toggleWorkspaceActivity(i)
+			}
+		}
+		return m, nil
 	case "ctrl+backspace":
 		if len(c.attachments) > 0 {
 			c.attachments = c.attachments[:len(c.attachments)-1]
@@ -226,11 +249,12 @@ func (m model) sendChat() (tea.Model, tea.Cmd) {
 	}
 
 	commands := map[string]string{
-		"/files":   "tab",
-		"/review":  "v",
-		"/task":    "b",
-		"/submit":  "s",
-		"/refresh": "r",
+		"/continue": "workspace-continue",
+		"/files":    "tab",
+		"/review":   "v",
+		"/task":     "b",
+		"/submit":   "s",
+		"/refresh":  "r",
 	}
 	if action, ok := commands[text]; ok {
 		if len(m.composer.attachments) > 0 {
@@ -366,7 +390,7 @@ func (m model) composerRows(width int) []string {
 	lines := strings.Split(ansi.Wrap(input, max(1, width-5), ""), "\n")
 
 	maxLines := m.bodyHeight() - 4
-	if m.bodyHeight() >= 10 {
+	if m.bodyHeight() >= 8 {
 		maxLines--
 	}
 
@@ -391,7 +415,10 @@ func (m model) composerRows(width int) []string {
 	}
 	mode := "Task chat · / commands · @ attach"
 	if !m.workAgent.active {
-		mode = "Task chat · send to participant · Start agent to work"
+		mode = "Task chat · send to participant · Start my agent to work"
+		if !m.hasConnectedAgent() {
+			mode = "Task chat · send to participant · Connect agent to work"
+		}
 	}
 	if m.loading {
 		mode = "Sending…"

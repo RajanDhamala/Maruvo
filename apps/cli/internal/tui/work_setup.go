@@ -40,7 +40,7 @@ func (m model) openWorkSetup(instruction string) (tea.Model, tea.Cmd) {
 		return m.startWorkAgent(instruction)
 	}
 	if m.workAgent.active {
-		m.notice = "Both-agent session is already active. Stop it before configuring a new session."
+		m.notice = "Your agent is already active. Stop it before inviting both agents."
 		return m, nil
 	}
 	if m.screen != workspaceScreen || m.workspace.Post.AcceptedBy == nil || (!m.isPoster(m.workspace.Post) && !m.isWorker(m.workspace.Post)) {
@@ -188,6 +188,8 @@ func (m model) workSetupResult(msg workSetupResult) (tea.Model, tea.Cmd) {
 			m.withdrawReady()
 			m.workSetup.open = true
 			m.workSetup.err = errors.New(m.notice)
+		} else {
+			m.notice = "Both-agent session started."
 		}
 		return m, tea.Batch(start, m.workSetupPoll())
 	}
@@ -211,7 +213,7 @@ func (m model) workSetupView() tea.View {
 		role = "requester"
 	}
 	role += " · @" + m.user.GitHubLogin + " · profile " + m.profile
-	rows := []string{bold(fmt.Sprintf("Inviting participant · task #%d", m.workspace.Post.ID)), "", "Your role: " + role, "Model: " + plain(s.provider), "Folder: " + plain(m.localDirectory()), "Permissions: " + permissionModes[m.permissionMode()].name, "", "You: " + own, "Other participant: " + peer, "", "The other participant receives an Accept / Decline invitation.", "Both agents start after they accept and their setup is verified."}
+	rows := []string{bold(fmt.Sprintf("Two-agent session setup · task #%d", m.workspace.Post.ID)), "", "Your role: " + role, "Model: " + plain(s.provider), "Folder: " + plain(m.localDirectory()), "Permissions: " + permissionModes[m.permissionMode()].name, "", "You: " + own, "Other participant: " + peer, "", "The other participant receives an Accept / Decline invitation.", "Both agents start after they accept and their setup is verified."}
 	if s.err != nil {
 		own, peer = "Setup failed", "Invitation not confirmed"
 		rows[0] = bold(fmt.Sprintf("Invitation failed · task #%d", m.workspace.Post.ID))

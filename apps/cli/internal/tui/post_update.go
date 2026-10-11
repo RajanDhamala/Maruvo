@@ -176,6 +176,20 @@ func (m model) updatePosts(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.movePost(1)
 		}
+	case "pgup", "pgdown", "home", "end":
+		if m.screen == detailScreen && len(m.posts) > 0 {
+			page := max(1, m.bodyHeight()-len(m.detailHeader().rows))
+			switch key {
+			case "pgup":
+				m.scroll = max(0, m.scroll-page)
+			case "pgdown":
+				m.scroll = min(m.detailScrollMax(), m.scroll+page)
+			case "home":
+				m.scroll = 0
+			case "end":
+				m.scroll = m.detailScrollMax()
+			}
+		}
 	case "left", "[":
 		if m.screen == feedScreen {
 			m.level = (m.level + 2) % 3

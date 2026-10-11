@@ -423,7 +423,7 @@ func toolList() []tool {
 		),
 		commandTool(
 			"download",
-			"Download a shared file to a new path and verify its SHA-256. Existing files are preserved.",
+			"Download a shared file to a new path and verify its SHA-256. Access is recorded before transfer; requester/reviewer access to worker outputs blocks unilateral refunds through Maruvo. Existing files are preserved.",
 			[]string{"post", "id", "to"},
 			map[string]toolParameter{
 				"post": post,

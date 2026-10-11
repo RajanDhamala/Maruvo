@@ -22,7 +22,7 @@ func LoadAgentSession(apiURL string) (string, bool, error) {
 
 	var credential session
 	if json.NewDecoder(io.LimitReader(file, 16<<10)).Decode(&credential) != nil ||
-		credential.APIURL != apiURL || !strings.HasPrefix(credential.Token, "mru_agent_") {
+		credential.APIURL != apiURL || (!strings.HasPrefix(credential.Token, "mru_agent_") && !strings.HasPrefix(credential.Token, "mru_work_")) {
 		return "", true, fmt.Errorf("invalid agent credential file or API URL mismatch")
 	}
 

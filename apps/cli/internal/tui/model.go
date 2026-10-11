@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
+	"github.com/rajandhamala/Maruvo/cli/internal/providers"
 )
 
 type screen int
@@ -22,6 +23,7 @@ var levels = []string{"easy", "medium", "complex"}
 var statuses = []string{"open", "negotiating", "in_progress", "completed", "cancelled"}
 
 type model struct {
+	board                  workBoard
 	shortcutsOpen          bool
 	shortcutScroll         int
 	ctx                    context.Context
@@ -42,6 +44,7 @@ type model struct {
 	directory              string
 	commands               commandMenu
 	providers              providerSettings
+	agentConfig            providers.Config
 	localAgent             localAgentState
 	workAgent              workspaceAgent
 	workSetup              workSetup
@@ -87,6 +90,7 @@ type model struct {
 	workspaceFiles         bool
 	fileSelection          int
 	activityScroll         int
+	activityExpanded       map[string]bool
 	workspaceReview        bool
 	reviewPlan             api.SettlementPlan
 	reviewConfirm          bool
@@ -95,17 +99,18 @@ type model struct {
 
 func Run(ctx context.Context, client *api.Client, message string, demo bool, profile string) error {
 	final, err := tea.NewProgram(model{
-		ctx:       ctx,
-		client:    client,
-		profile:   profile,
-		dashboard: dashboardState{focus: dashboardPrompt},
-		homeInput: textField{limit: 2000},
-		homePath:  currentHomePath(),
-		message:   message,
-		loading:   true,
-		demo:      demo,
-		width:     80,
-		height:    24,
+		ctx:         ctx,
+		client:      client,
+		profile:     profile,
+		permissions: localPermissions{defaultMode: 2},
+		dashboard:   dashboardState{focus: dashboardPrompt},
+		homeInput:   textField{limit: 2000},
+		homePath:    currentHomePath(),
+		message:     message,
+		loading:     true,
+		demo:        demo,
+		width:       80,
+		height:      24,
 	}).Run()
 	if m, ok := final.(model); ok {
 		m.stopWorkspace()

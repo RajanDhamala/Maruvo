@@ -20,6 +20,7 @@ var slashCommands = []struct {
 	{"/agent", "Open local CLI agent"},
 	{"/sessions", "Browse saved agent chats"},
 	{"/remote", "Remote agents / queued work / harness setup"},
+	{"/board", "Personal projects / assignments / contributions"},
 	{"/priority", "Priority · coming soon"},
 	{"/new", "New task · coming soon"},
 	{"/connect", "Connect an AI provider"},
@@ -30,7 +31,8 @@ var slashCommands = []struct {
 	{"/submit", "Submit delivery"},
 	{"/refresh", "Refresh task status"},
 	{"/wallet", "Connect Phantom / Solflare wallet"},
-	{"/work", "Invite the other participant to work together"},
+	{"/work", "Invite both agents; the other participant must accept"},
+	{"/continue", "Continue your paused task agent"},
 	{"/stop-work", "Stop task agent"},
 	{"/permissions", "Local agent permissions"},
 	{"/allow", "Control local agent permissions"},
@@ -109,7 +111,7 @@ func (m model) commandIndices() []int {
 
 	for i, command := range slashCommands {
 		switch command.name {
-		case "/work", "/stop-work":
+		case "/work", "/continue", "/stop-work":
 			if m.screen != workspaceScreen {
 				continue
 			}
@@ -128,6 +130,9 @@ func (m model) commandIndices() []int {
 
 func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
 	name := slashCommands[index].name
+	if name == "/board" {
+		return m.openBoard()
+	}
 	_, argument, complete := commandParts(m.commands.query.value)
 	if complete && argument != "" && name != "/agent" && name != "/work" && name != "/open" {
 		m.commands.err = errors.New(name + " does not take arguments.")
@@ -143,6 +148,10 @@ func (m model) chooseCommand(index int) (tea.Model, tea.Cmd) {
 	}
 	if name == "/permissions" || name == "/allow" {
 		return m.openPermissions()
+	}
+	if name == "/continue" {
+		m.commands.open = false
+		return m.continueWorkAgent()
 	}
 	if m.workAgent.active {
 		switch slashCommands[index].name {
@@ -534,7 +543,7 @@ func (m model) commandLayout() postLayout {
 
 			command := slashCommands[i]
 			if m.screen == workspaceScreen && command.name == "/agent" {
-				command.label = "Your agent · /agent <instruction>"
+				command.label = "Start my agent · /agent <instruction>"
 			}
 			if (m.commands.agent || m.screen == workspaceScreen) && command.name == "/new" {
 				command.label = "Start a new chat"

@@ -9,11 +9,11 @@ import (
 )
 
 type localPermissions struct {
-	confirmSelection            int
-	remembered                  *sync.Map
-	open, confirm, full         bool
-	account, profile, directory string
-	selection, mode             int
+	confirmSelection             int
+	remembered                   *sync.Map
+	open, confirm, full          bool
+	account, profile, directory  string
+	selection, mode, defaultMode int
 }
 
 var permissionModes = []struct{ name, description string }{
@@ -26,7 +26,7 @@ var permissionModes = []struct{ name, description string }{
 func (m model) permissionMode() int {
 	p := m.permissions
 	if p.account != m.user.ID || p.profile != m.profile || p.directory != m.localDirectory() {
-		return 0
+		return p.defaultMode
 	}
 	if p.full {
 		return 2
@@ -47,8 +47,14 @@ func (m model) permitsAction(action string) bool {
 func (m *model) setPermissionMode(mode int) {
 	p := &m.permissions
 	if p.remembered != nil {
-		p.remembered.Range(func(k, v any) bool { p.remembered.Delete(k); return true })
-		p.remembered.Store(m.approvalKey(providers.Approval{Action: "__policy__"}), mode)
+		key := m.approvalKey(providers.Approval{Action: "__policy__"})
+		p.remembered.Store(key, mode)
+		p.remembered.Range(func(k, v any) bool {
+			if k != key {
+				p.remembered.Delete(k)
+			}
+			return true
+		})
 	}
 	p.mode, p.full, p.open, p.confirm = mode, mode == 2, false, false
 	p.account, p.profile, p.directory = m.user.ID, m.profile, m.localDirectory()
@@ -56,8 +62,7 @@ func (m *model) setPermissionMode(mode int) {
 }
 
 func (m model) hasFullAccess() bool {
-	p := m.permissions
-	return p.full && p.account == m.user.ID && p.profile == m.profile && p.directory == m.localDirectory()
+	return m.permissionMode() == 2
 }
 
 func (m model) openPermissions() (tea.Model, tea.Cmd) {
@@ -65,7 +70,7 @@ func (m model) openPermissions() (tea.Model, tea.Cmd) {
 		m.notice = "Stop the task agent and finish the current turn before changing permissions."
 		return m, nil
 	}
-	if m.localAgent.approval == nil && (m.workAgent.active || m.workSetup.armed) {
+	if m.localAgent.approval == nil && !m.workAgent.paused && (m.workAgent.active || m.workSetup.armed) {
 		m.stopWorkAgent("Paused to update local permissions. Confirm Ready again afterward.")
 	}
 	m.commands.open = false
@@ -92,6 +97,9 @@ func (m model) updatePermissions(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			} else {
 				p.open, p.confirm = false, false
 			}
+		}
+		if m.hasFullAccess() && m.localAgent.approval != nil {
+			return m.updateActionApproval(tea.KeyPressMsg{Code: 'y', Text: "y"})
 		}
 		return m, nil
 	}
@@ -124,6 +132,9 @@ func (m model) updatePermissions(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.setPermissionMode(2)
 			m.notice = "Full access approved for this account and folder until the CLI exits."
 		}
+	}
+	if m.hasFullAccess() && m.localAgent.approval != nil {
+		return m.updateActionApproval(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	}
 	return m, nil
 }
@@ -167,11 +178,4 @@ func (m model) permissionsView() tea.View {
 
 func (m model) approvalKey(change providers.Approval) [32]byte {
 	return sha256.Sum256([]byte(fmt.Sprintf("%q", []string{m.user.ID, m.profile, m.localDirectory(), change.Action})))
-}
-func (m model) rememberedApproval(change providers.Approval) bool {
-	if m.permissions.remembered == nil {
-		return false
-	}
-	_, ok := m.permissions.remembered.Load(m.approvalKey(change))
-	return ok
 }

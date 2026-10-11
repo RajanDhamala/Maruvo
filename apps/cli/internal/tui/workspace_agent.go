@@ -3,6 +3,7 @@ package tui
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,37 @@ type workspaceAgent struct {
 }
 type workspaceAgentTick struct{ generation uint64 }
 
+func (m model) continueWorkAgent() (tea.Model, tea.Cmd) {
+	a := &m.workAgent
+	if m.screen != workspaceScreen || !a.active || !a.paused || a.postID != m.workspace.Post.ID ||
+		!m.localAgent.open || m.localAgent.busy || m.localAgent.approval != nil || !errors.Is(m.localAgent.err, providers.ErrToolBatchPaused) {
+		m.notice = "Your task agent has no paused tool batch."
+		return m, nil
+	}
+	if m.workspace.Post.Status == "completed" || m.workspace.Post.Status == "cancelled" || m.workspace.AgentControl.Mode == "manual" {
+		m.stopWorkAgent("Task agent stopped: this task is closed or agent access is disabled.")
+		return m, m.saveLocalConversation()
+	}
+	if a.turns >= 20 || time.Since(a.started) >= 30*time.Minute {
+		m.stopWorkAgent("Task agent limit reached (20 turns / 30 minutes). Use /work to resume.")
+		return m, m.saveLocalConversation()
+	}
+	if m.localAgent.client == nil || m.localAgent.marketplace == nil || m.localAgent.marketplace.TaskID != a.postID {
+		m.notice = "Stop and set up your task agent again before continuing."
+		return m, nil
+	}
+	m.commands.open = false
+	m.localAgent.input = textField{limit: 12000, byteLimit: 16000, multiline: true}
+	if a.instruction != "" {
+		m.localAgent.input.insert("Continue from the last verified tool result without repeating completed actions.\nLocal user's instruction: " + a.instruction)
+		a.instruction = ""
+	}
+	a.turns++
+	a.status = "Working · resuming tool batch"
+	m.notice = "Your task agent is continuing."
+	return m.sendLocalPrompt()
+}
+
 func (m model) workAgentTick() tea.Cmd {
 	generation := m.workAgent.generation
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return workspaceAgentTick{generation} })
@@ -32,11 +64,20 @@ func (m model) workAgentTick() tea.Cmd {
 
 func (m *model) stopWorkAgent(reason string) {
 	m.withdrawReady()
-	if m.workAgent.active && m.localAgent.cancel != nil {
-		m.localAgent.cancel()
-	}
 	if m.workAgent.active {
-		m.localAgent.open = false
+		a := &m.localAgent
+		if a.cancel != nil {
+			a.cancel()
+		}
+		a.finishStream(true)
+		a.sequence++
+		a.open, a.busy, a.autoSend = false, false, false
+		a.approval, a.answer, a.approvalGuidance = nil, nil, nil
+		a.approvalEditing = false
+		a.fundingTask, a.workspaceTask = 0, 0
+		if a.chat.ID != "" {
+			a.history = providers.ConversationHistory(a.chat)
+		}
 	}
 	m.workAgent.active, m.workAgent.pending = false, false
 	m.workAgent.generation++
@@ -128,11 +169,20 @@ func (m model) advanceWorkAgent(msg workspaceAgentTick) (tea.Model, tea.Cmd) {
 	if !a.active || msg.generation != a.generation || m.screen != workspaceScreen || m.workspace.Post.ID != a.postID {
 		return m, nil
 	}
-	if a.turns >= 20 || time.Since(a.started) >= 30*time.Minute {
+	if (a.turns >= 20 && !m.localAgent.busy) || time.Since(a.started) >= 30*time.Minute {
 		m.stopWorkAgent("Task agent limit reached (20 turns / 30 minutes). Use /work to resume.")
 		return m, m.saveLocalConversation()
 	}
+	if m.commands.open || m.providers.open || m.agentControls.open || m.permissions.open ||
+		m.workSetup.open || m.shortcutsOpen || m.invitations.pending != nil {
+		return m, m.workAgentTick()
+	}
 	if a.paused {
+		if m.hasFullAccess() {
+			next, cmd := m.continueWorkAgent()
+			m = next.(model)
+			return m, tea.Batch(cmd, m.workAgentTick())
+		}
 		return m, m.workAgentTick()
 	}
 	if m.localAgent.err != nil && !m.localAgent.busy {

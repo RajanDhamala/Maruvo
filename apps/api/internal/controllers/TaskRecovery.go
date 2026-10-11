@@ -58,6 +58,10 @@ func (c *Controller) RecoverPost(w http.ResponseWriter, r *http.Request) {
 		postJSON(w, 403, map[string]string{"error": "only the requester can cancel or reopen this task"})
 		return
 	}
+	if payload.Action == "reopen" && post.Visibility == "private" {
+		postJSON(w, 409, map[string]string{"error": "create a new private assignment for child work"})
+		return
+	}
 
 	if !post.AcceptedBy.Valid ||
 		(post.Status != db.PostStatusNegotiating && post.Status != db.PostStatusCancelled) {

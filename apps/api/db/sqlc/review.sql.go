@@ -98,7 +98,7 @@ func (q *Queries) MarkSettlementSubmitted(ctx context.Context, arg MarkSettlemen
 
 const requestWorkspaceChanges = `-- name: RequestWorkspaceChanges :one
 UPDATE post_workspaces SET review_state = 'changes_requested', review_note = $2, review_by = NULL
-WHERE post_id = $1 AND review_state = 'submitted' RETURNING post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files, review_by
+WHERE post_id = $1 AND review_state = 'submitted' RETURNING post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files, review_by, refund_blocked
 `
 
 type RequestWorkspaceChangesParams struct {
@@ -119,6 +119,7 @@ func (q *Queries) RequestWorkspaceChanges(ctx context.Context, arg RequestWorksp
 		&i.ReviewNote,
 		&i.DeliveryFiles,
 		&i.ReviewBy,
+		&i.RefundBlocked,
 	)
 	return i, err
 }

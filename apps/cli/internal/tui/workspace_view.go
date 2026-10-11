@@ -13,8 +13,12 @@ import (
 )
 
 type conversationRow struct {
-	text      string
-	fileIndex int
+	text                     string
+	fileIndex                int
+	activity                 bool
+	activityTool             bool
+	activityIndex            int
+	activityX, activityWidth int
 }
 
 func (m model) workspacePeerLabel() string {
@@ -70,8 +74,15 @@ func chatText(text string) string {
 func (m model) conversationRows(width int) []conversationRow {
 	var rows []conversationRow
 
-	for _, event := range m.workspace.Events {
+	for i := 0; i < len(m.workspace.Events); i++ {
+		event := m.workspace.Events[i]
 		switch event.Kind {
+		case "agent.activity":
+			start := i
+			for i+1 < len(m.workspace.Events) && sameActivityActor(event, m.workspace.Events[i+1]) {
+				i++
+			}
+			rows = append(rows, m.activityRows(start, i+1, width)...)
 		case "message", "file.shared":
 			actor := "System"
 			if event.ActorID != nil {
@@ -137,7 +148,7 @@ func (m model) chatLayout() postLayout {
 	width, bodyHeight := m.contentWidth(), m.bodyHeight()
 	post := m.workspace.Post
 	l := postLayout{
-		footer: "Enter send · / commands · @ attach · Ctrl+F files · Ctrl+R review · Ctrl+T controls · Esc task",
+		footer: "Enter send · Alt+a activity · / commands · @ attach · Ctrl+F files · Ctrl+R review · Ctrl+T controls · Esc task",
 	}
 
 	headerStatus := accent(m.live)
@@ -156,19 +167,35 @@ func (m model) chatLayout() postLayout {
 	}
 
 	l.rows = append(l.rows, align(accent(flow.stage), muted(links), width))
-	if bodyHeight >= 10 {
-		label, button := "Your agent is stopped", "Set up agents"
+	if bodyHeight >= 8 {
+		label, button, action := "Your agent is stopped", "Start my agent", "workspace-agent"
+		if !m.hasConnectedAgent() {
+			label, button, action = "Your agent is not connected", "Connect agent", "workspace-connect-agent"
+		}
 		if m.workAgent.postID == post.ID && m.workAgent.status != "" {
 			label = m.workAgent.status
 		}
 		if m.workSetup.armed && !m.workAgent.active {
-			label, button = "You are ready · waiting for the other participant", "Cancel readiness"
+			label, button, action = "Invitation sent · waiting for acceptance", "Cancel invitation", "workspace-agent"
 		}
 		if m.workAgent.active {
-			label, button = "Your agent: "+m.workAgent.status, "Stop agent"
+			label, button, action = "Your agent: "+m.workAgent.status, "Stop agent", "workspace-agent"
 		}
-		l.hit(max(0, width-len(button)), len(l.rows), len(button), 1, "workspace-agent", 0)
-		l.rows = append(l.rows, align(muted(label), accent(button), width))
+		if m.hasConnectedAgent() && !m.workAgent.active && !m.workSetup.armed {
+			invite := "Invite both agents"
+			l.hit(width-len(invite), len(l.rows), len(invite), 1, "workspace-invite", 0)
+			l.hit(width-len(invite)-3-len(button), len(l.rows), len(button), 1, action, 0)
+			button += "   " + invite
+		} else {
+			l.hit(max(0, width-len(button)), len(l.rows), len(button), 1, action, 0)
+		}
+		if m.workAgent.active && m.workAgent.paused {
+			resume := "Continue agent"
+			l.hit(max(0, width-len(button)-3-len(resume)), len(l.rows), len(resume), 1, "workspace-continue", 0)
+			button = resume + "   " + button
+		}
+		left := ansi.Truncate(muted(label), max(0, width-len(button)-2), "…")
+		l.rows = append(l.rows, left+strings.Repeat(" ", max(0, width-ansi.StringWidth(left)-len(button)))+accent(button))
 	}
 
 	if bodyHeight >= 10 {
@@ -277,6 +304,13 @@ func (m model) chatLayout() postLayout {
 
 	end := len(activity) - offset
 	for _, row := range activity[max(0, end-visible):end] {
+		if row.activity {
+			if row.activityTool {
+				l.hit(row.activityX, len(l.rows), row.activityWidth, 1, "workspace-tool", row.activityIndex)
+			} else {
+				l.hit(2, len(l.rows), ansi.StringWidth(row.text)-2, 1, "workspace-activity", row.activityIndex)
+			}
+		}
 		if row.fileIndex >= 0 {
 			l.hit(max(0, width-12), len(l.rows), 12, 1, "workspace-download", row.fileIndex)
 		}

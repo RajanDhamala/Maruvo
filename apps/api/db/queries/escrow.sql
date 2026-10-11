@@ -44,13 +44,14 @@ SELECT * FROM post_escrows WHERE post_id = $1;
 INSERT INTO post_escrows (post_id, address, program_id, reviewer, network, transaction, last_valid_block_height, fee_lamports, storage_lamports, agreement_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (post_id) DO UPDATE SET transaction = EXCLUDED.transaction,
+    reviewer = EXCLUDED.reviewer,
     last_valid_block_height = EXCLUDED.last_valid_block_height,
     fee_lamports = EXCLUDED.fee_lamports, storage_lamports = EXCLUDED.storage_lamports,
     agreement_version = EXCLUDED.agreement_version,
     signature = '', signed_transaction = '', state = 'prepared', updated_at = NOW()
 WHERE post_escrows.state IN ('failed', 'expired')
     AND post_escrows.address = EXCLUDED.address AND post_escrows.program_id = EXCLUDED.program_id
-    AND post_escrows.reviewer = EXCLUDED.reviewer AND post_escrows.network = EXCLUDED.network
+    AND post_escrows.network = EXCLUDED.network
 RETURNING *;
 
 -- name: MarkEscrowSubmitted :one

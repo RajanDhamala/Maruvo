@@ -82,3 +82,10 @@ func validateSigningConfig(network, programID string) error {
 
 	return nil
 }
+
+func validateReviewer(reviewer, poster string) error {
+	if reviewer != "" && (reviewer == poster || reviewer == os.Getenv("SOLANA_REVIEWER")) {
+		return nil
+	}
+	return errors.New("reviewer must be the requester wallet or match the legacy reviewer configuration")
+}

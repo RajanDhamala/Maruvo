@@ -35,7 +35,7 @@ const createPost = `-- name: CreatePost :one
 INSERT INTO posts (user_id,title,cost_lamports,end_time,status,level,description,acceptance_criteria,input_files,expected_outputs,
     funding_window_seconds, deliver_by, review_window_seconds, target_worker)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker
+RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker, visibility
 `
 
 type CreatePostParams struct {
@@ -97,6 +97,7 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) (Post, e
 		&i.DeliverBy,
 		&i.ReviewWindowSeconds,
 		&i.TargetWorker,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -119,9 +120,10 @@ func (q *Queries) DeleteYourPost(ctx context.Context, arg DeleteYourPostParams) 
 }
 
 const fetchPostByLevel = `-- name: FetchPostByLevel :many
-SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker from posts WHERE level=$1 AND user_id<>$2 AND status='open'
+SELECT id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker, visibility from posts WHERE level=$1 AND user_id<>$2 AND status='open'
     AND accepted_by IS NULL AND end_time > NOW()
-    AND (target_worker IS NULL OR target_worker = $2) ORDER BY created_at DESC
+    AND (target_worker IS NULL OR target_worker = $2)
+    AND (visibility = 'public' OR target_worker = $2) ORDER BY created_at DESC
 `
 
 type FetchPostByLevelParams struct {
@@ -162,6 +164,7 @@ func (q *Queries) FetchPostByLevel(ctx context.Context, arg FetchPostByLevelPara
 			&i.DeliverBy,
 			&i.ReviewWindowSeconds,
 			&i.TargetWorker,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -174,7 +177,7 @@ func (q *Queries) FetchPostByLevel(ctx context.Context, arg FetchPostByLevelPara
 }
 
 const getUrPosts = `-- name: GetUrPosts :many
-SELECT posts.id, posts.user_id, posts.title, posts.cost_lamports, posts.end_time, posts.status, posts.level, posts.created_at, posts.updated_at, posts.accepted_by, posts.accepted_at, posts.poster_wallet, posts.worker_wallet, posts.description, posts.acceptance_criteria, posts.input_files, posts.expected_outputs, posts.reopened_as, posts.funding_window_seconds, posts.fund_by, posts.deliver_by, posts.review_window_seconds, posts.target_worker from posts WHERE posts.user_id=$1 OR posts.accepted_by=$1
+SELECT posts.id, posts.user_id, posts.title, posts.cost_lamports, posts.end_time, posts.status, posts.level, posts.created_at, posts.updated_at, posts.accepted_by, posts.accepted_at, posts.poster_wallet, posts.worker_wallet, posts.description, posts.acceptance_criteria, posts.input_files, posts.expected_outputs, posts.reopened_as, posts.funding_window_seconds, posts.fund_by, posts.deliver_by, posts.review_window_seconds, posts.target_worker, posts.visibility from posts WHERE posts.user_id=$1 OR posts.accepted_by=$1
     OR EXISTS(SELECT 1 FROM post_escrows e JOIN wallets w ON w.address = e.reviewer
         WHERE e.post_id = posts.id AND w.user_id = $1)
 ORDER BY created_at DESC
@@ -213,6 +216,7 @@ func (q *Queries) GetUrPosts(ctx context.Context, userID int64) ([]Post, error) 
 			&i.DeliverBy,
 			&i.ReviewWindowSeconds,
 			&i.TargetWorker,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -375,7 +379,7 @@ func (q *Queries) SignInGitHub(ctx context.Context, arg SignInGitHubParams) (Use
 }
 
 const updatePostStatus = `-- name: UpdatePostStatus :one
-UPDATE posts SET status=$1,updated_at=NOW() WHERE id=$2 AND user_id=$3 AND accepted_by IS NULL RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker
+UPDATE posts SET status=$1,updated_at=NOW() WHERE id=$2 AND user_id=$3 AND accepted_by IS NULL RETURNING id, user_id, title, cost_lamports, end_time, status, level, created_at, updated_at, accepted_by, accepted_at, poster_wallet, worker_wallet, description, acceptance_criteria, input_files, expected_outputs, reopened_as, funding_window_seconds, fund_by, deliver_by, review_window_seconds, target_worker, visibility
 `
 
 type UpdatePostStatusParams struct {
@@ -411,6 +415,7 @@ func (q *Queries) UpdatePostStatus(ctx context.Context, arg UpdatePostStatusPara
 		&i.DeliverBy,
 		&i.ReviewWindowSeconds,
 		&i.TargetWorker,
+		&i.Visibility,
 	)
 	return i, err
 }

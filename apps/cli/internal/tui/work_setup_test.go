@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"errors"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,25 @@ func TestWorkPreparationArmsInvitationWithoutAnotherReadyClick(t *testing.T) {
 	m = next.(model)
 	if cmd == nil || !m.workSetup.armed || !m.workSetup.invite || m.workAgent.active {
 		t.Fatal("/work did not prepare an invitation or started before acceptance")
+	}
+}
+
+func TestWorkInvitationChecksActualLocalConnectionBeforeReadiness(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := workspaceAgentControlsFixture(t, false, true)
+	next, cmd := m.openWorkSetup("")
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("invitation did not check setup")
+	}
+	result := cmd().(workSetupResult)
+	if result.err == nil || !strings.Contains(result.err.Error(), "Connect a model") {
+		t.Fatal("cached connection sent readiness despite missing local provider configuration")
+	}
+	next, _ = m.workSetupResult(result)
+	m = next.(model)
+	if m.workSetup.armed || m.workAgent.active || m.workSetup.err == nil {
+		t.Fatal("missing provider started work or armed an invitation")
 	}
 }
 
@@ -80,5 +100,22 @@ func TestSentInvitationReturnsToWorkspaceWhileWaiting(t *testing.T) {
 	got := next.(model)
 	if cmd == nil || got.workSetup.open || !got.workSetup.armed || got.workAgent.active || got.notice == "" {
 		t.Fatal("sent invitation did not return to workspace while preserving readiness")
+	}
+}
+
+func TestStartedWorkSessionReplacesWaitingInvitationNotice(t *testing.T) {
+	worker := int64(1)
+	m := model{
+		ctx: t.Context(), screen: workspaceScreen, user: api.User{ID: "3"},
+		workspace: api.Workspace{Post: api.Post{ID: 13, UserID: 3, AcceptedBy: &worker}},
+		workSetup: workSetup{armed: true, postID: 13, generation: 4},
+		notice:    "Work invitation sent. Waiting for the other participant to Accept; you can keep using this workspace.",
+	}
+	next, cmd := m.workSetupResult(workSetupResult{
+		generation: 4, readiness: api.AgentReadiness{You: true, Peer: true, Pair: "sender:worker"},
+	})
+	m = next.(model)
+	if cmd == nil || !m.workAgent.active || m.notice != "Both-agent session started." {
+		t.Fatal("active session retained the invitation-waiting notice")
 	}
 }

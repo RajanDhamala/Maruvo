@@ -133,7 +133,7 @@ func (m model) updateInvite(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 func (m model) inviteView() tea.View {
 	invitation := m.invitations.pending
-	rows := []string{bold("Work invitation"), "", fmt.Sprintf("Participant #%d invited you to task #%d", invitation.From, invitation.PostID), plain(invitation.Title), "", "Accept opens this workspace and starts your agent together with theirs.", "Your local permission settings still apply. Payment signing remains separate.", "Folder: " + plain(m.localDirectory()), "Permissions: " + permissionModes[m.permissionMode()].name}
+	rows := []string{bold("Two-agent work invitation"), "", fmt.Sprintf("Participant #%d invited you to task #%d", invitation.From, invitation.PostID), plain(invitation.Title), "", "Accept opens this workspace and checks your connected agent.", "Both agents start after your setup is verified.", "Your local permissions apply. Payment signing remains separate.", "Folder: " + plain(m.localDirectory()), "Permissions: " + permissionModes[m.permissionMode()].name}
 	if m.notice != "" {
 		rows = append(rows, "", muted(plain(m.notice)))
 	}

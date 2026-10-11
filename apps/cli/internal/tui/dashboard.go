@@ -56,7 +56,7 @@ func (m model) dashboardGeometry() dashboardGeometry {
 }
 
 func (m model) onDashboard() bool {
-	return m.screen == feedScreen || m.screen == myPostsScreen
+	return !m.board.open && (m.screen == feedScreen || m.screen == myPostsScreen)
 }
 
 func (m model) dashboardView() tea.View {

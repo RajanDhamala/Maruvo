@@ -3,6 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
+	"sync"
 	"testing"
 )
 
@@ -35,6 +36,38 @@ func TestFullAccessRequiresLocalConfirmationAndMatchesScope(t *testing.T) {
 	m = next.(model)
 	if m.hasFullAccess() {
 		t.Fatal("ask mode did not revoke full access")
+	}
+}
+
+func TestTestingDefaultAllowsActionsAndExplicitModesStillApply(t *testing.T) {
+	m := model{user: api.User{ID: "1"}, profile: "worker", directory: t.TempDir(),
+		permissions: localPermissions{defaultMode: 2, remembered: &sync.Map{}}}
+	captured := m
+	if !m.hasFullAccess() || m.permissions.open || m.permissions.confirm {
+		t.Fatal("testing default requested confirmation instead of allowing actions")
+	}
+	for _, action := range []string{"", "Run command", "Share with remote task", "Download from remote task"} {
+		if !m.permitsAction(action) {
+			t.Fatalf("testing default requested approval for %q", action)
+		}
+	}
+	next, _ := m.openPermissions()
+	m = next.(model)
+	if m.permissions.selection != 2 {
+		t.Fatal("permission menu did not reflect default Full Access")
+	}
+	for _, mode := range []int{0, 1, 3} {
+		m.setPermissionMode(mode)
+		if m.hasFullAccess() || m.permitsAction("Run command") || captured.permitsAction("Run command") {
+			t.Fatalf("explicit mode %d failed to override testing default", mode)
+		}
+		if m.permitsAction("") != (mode == 1) {
+			t.Fatalf("explicit mode %d failed to control file edits", mode)
+		}
+	}
+	m.directory = t.TempDir()
+	if !m.hasFullAccess() || !m.permitsAction("Run command") {
+		t.Fatal("new local scope lost the testing default")
 	}
 }
 

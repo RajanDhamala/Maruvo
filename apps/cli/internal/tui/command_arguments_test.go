@@ -42,11 +42,12 @@ func TestWorkArgumentsQueueWithoutRestartingActiveRunner(t *testing.T) {
 }
 
 func TestVisibleAgentStartUsesDraftAndPreservesAttachments(t *testing.T) {
-	worker := int64(1)
-	m := model{screen: workspaceScreen, user: api.User{ID: "1"}, directory: t.TempDir(), workspace: api.Workspace{Post: api.Post{ID: 5, UserID: 3, AcceptedBy: &worker, Status: "in_progress"}}, composer: chatComposer{draft: textField{value: "start solving problem"}, attachments: []localFile{{path: "patch.diff"}}}}
+	m := workspaceAgentControlsFixture(t, false, true)
+	m.directory = t.TempDir()
+	m.composer.draft.value = "start solving problem"
 	next, cmd := m.workspaceCommand("workspace-agent")
 	m = next.(model)
-	if cmd == nil || m.workAgent.active || !m.workSetup.open || m.workSetup.instruction != "start solving problem" || m.composer.draft.value != "" || len(m.composer.attachments) != 1 {
+	if cmd == nil || !m.workAgent.active || m.workSetup.open || m.workSetup.invite || m.workAgent.instruction != "start solving problem" || m.composer.draft.value != "" || len(m.composer.attachments) != 1 {
 		t.Fatal("visible start lost task instruction or attachments")
 	}
 	next, _ = m.workspaceCommand("workspace-agent")
