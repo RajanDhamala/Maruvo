@@ -3,11 +3,11 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -211,7 +211,7 @@ func TestAgentReadsRequestsApprovalAndContinues(t *testing.T) {
 			events = append(events, event)
 		},
 	)
-	if err != nil || !approved || len(history) != 7 || len(events) != 3 {
+	if err != nil || !approved || len(history) != 7 || len(events) != 5 {
 		t.Fatalf(
 			"agent turn: approval=%v history=%d events=%d error=%v",
 			approved,
@@ -237,11 +237,14 @@ func TestAgentLoopBoundAndNoninteractiveEdits(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": message}}})
 	})
 
-	_, err := client.RunAgent(t.Context(), directory, nil, "Create output", nil, func(Event) {})
-	if err == nil || !strings.Contains(err.Error(), "turn limit") {
+	history, err := client.RunAgent(t.Context(), directory, nil, "Create output", nil, func(Event) {})
+	if err == nil || !errors.Is(err, ErrToolBatchPaused) {
 		t.Fatalf("unbounded tool loop: %v", err)
 	}
 
+	if len(history) < 3 {
+		t.Fatal("paused batch lost its tool history")
+	}
 	if _, err := os.Stat(filepath.Join(directory, "output.md")); !os.IsNotExist(err) {
 		t.Fatal("noninteractive agent wrote a file")
 	}

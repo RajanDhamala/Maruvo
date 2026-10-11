@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/rajandhamala/Maruvo/internal/utils"
+
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	db "github.com/rajandhamala/Maruvo/db/sqlc"
@@ -110,10 +113,28 @@ func (c *Controller) WsHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	connection := uuid.NewString()
+	human := r.Context().Value(utils.AgentKey) == nil
+	touch := func() {
+		if human {
+			presenceCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+			defer stop()
+			_ = c.touchPresence(presenceCtx, id, userID, connection)
+		}
+	}
+	touch()
+	defer func() {
+		if human {
+			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Second)
+			defer stop()
+			_ = c.redis.ZRem(cleanup, presenceKey(id, userID), connection).Err()
+		}
+	}()
 
 	conn.SetReadLimit(4096)
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
+		touch()
 		return conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 

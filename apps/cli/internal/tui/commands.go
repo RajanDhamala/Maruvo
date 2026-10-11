@@ -12,10 +12,12 @@ type demoResult struct {
 }
 
 type authResult struct {
-	user   api.User
-	token  string
-	wallet string
-	err    error
+	restored      bool
+	previousToken string
+	user          api.User
+	token         string
+	wallet        string
+	err           error
 }
 
 type logoutResult struct {
@@ -28,13 +30,20 @@ func (m model) restoreSession() tea.Cmd {
 	return func() tea.Msg {
 		token, err := auth.LoadSession(m.client.URL(), m.profile)
 		if err != nil || token == "" {
-			return authResult{err: err}
+			return authResult{restored: true, previousToken: m.token, err: err}
 		}
 
 		user, err := m.client.Me(m.ctx, token)
 		address, _ := m.client.Wallet(m.ctx, token)
 
-		return authResult{user: user, token: token, wallet: address, err: err}
+		return authResult{
+			restored:      true,
+			previousToken: m.token,
+			user:          user,
+			token:         token,
+			wallet:        address,
+			err:           err,
+		}
 	}
 }
 

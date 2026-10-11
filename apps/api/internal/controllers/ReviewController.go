@@ -110,7 +110,7 @@ func canSettle(workspace db.PostWorkspace, action string, version int64) bool {
 		return version > 0 && workspace.ReviewState == "submitted"
 	}
 
-	return action == "refund" && (workspace.ReviewState == "working" ||
+	return action == "refund" && !workspace.RefundBlocked && (workspace.ReviewState == "working" ||
 		workspace.ReviewState == "submitted" || workspace.ReviewState == "changes_requested")
 }
 
@@ -150,6 +150,9 @@ func (c *Controller) PreparePostSettlement(w http.ResponseWriter, r *http.Reques
 			return nil, err
 		}
 
+		if payload.Action == "refund" && workspace.RefundBlocked {
+			return nil, &workspaceFailure{409, refundBlockedMessage}
+		}
 		if !canSettle(workspace, payload.Action, payload.SubmissionVersion) {
 			postJSON(
 				w,
@@ -358,6 +361,15 @@ func (c *Controller) SubmitPostSettlement(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	workspace, err := q.GetWorkspace(ctx, id)
+	if err != nil {
+		escrowError(w, err)
+		return
+	}
+	if saved.Action == "refund" && workspace.RefundBlocked {
+		postJSON(w, 409, map[string]string{"error": refundBlockedMessage})
+		return
+	}
 	signature, err := utils.TransactionSignature(saved.Transaction, payload.Transaction, escrow.Reviewer)
 	if err != nil {
 		postJSON(w, 400, map[string]string{"error": err.Error()})
@@ -366,12 +378,6 @@ func (c *Controller) SubmitPostSettlement(w http.ResponseWriter, r *http.Request
 
 	if saved.State == "confirmed" && saved.Signature == signature {
 		postJSON(w, 200, map[string]any{"settlement": viewSettlement(saved, false)})
-		return
-	}
-
-	workspace, err := q.GetWorkspace(ctx, id)
-	if err != nil {
-		escrowError(w, err)
 		return
 	}
 

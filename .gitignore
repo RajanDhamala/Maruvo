@@ -4,6 +4,7 @@
 !.env.example
 !.env.*.example
 .env*
+!/apps/api/.env.mail.example
 *.pem
 *.key
 maruvo-work/
@@ -53,6 +54,14 @@ test-ledger/
 .DS_Store
 Thumbs.db
 .agents/
+
+# Publish the reusable skill while keeping other local agent configuration private.
+!/.agents/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/maruvo-work/
+!/apps/web/public/skills/maruvo-work/
 
 # Keep dependency lockfiles and generated protobuf source in Git.
 .vs/

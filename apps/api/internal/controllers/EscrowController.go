@@ -125,17 +125,42 @@ func (c *Controller) AcceptPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, ok := postIDPayload(w, r)
-	if !ok {
+	var payload struct {
+		ID         int64  `json:"id"`
+		OfferLease string `json:"offer_lease"`
+	}
+	if !decodeOffer(w, r, &payload) {
 		return
 	}
 
-	post, err := c.queries.AcceptPost(
+	if payload.ID <= 0 {
+		postJSON(w, 400, map[string]string{"error": "invalid post ID"})
+		return
+	}
+
+	id := payload.ID
+
+	tx, err := c.pool.Begin(r.Context())
+	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	q := db.New(tx)
+	if err = checkOfferClaim(r.Context(), q, userID, id, payload.OfferLease); err != nil {
+		workspaceError(w, err)
+		return
+	}
+
+	post, err := q.AcceptPost(
 		r.Context(),
 		db.AcceptPostParams{WorkerID: pgtype.Int8{Int64: userID, Valid: true}, PostID: id},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
 		c.acceptPostUnavailable(w, r, id, userID)
+
 		return
 	}
 
@@ -143,6 +168,11 @@ func (c *Controller) AcceptPost(w http.ResponseWriter, r *http.Request) {
 		log.Printf("accept post: %v", err)
 		postJSON(w, 500, map[string]string{"error": "failed to accept post"})
 
+		return
+	}
+
+	if err = tx.Commit(r.Context()); err != nil {
+		workspaceError(w, err)
 		return
 	}
 
@@ -236,6 +266,13 @@ func (c *Controller) PostInfo(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		escrowError(w, err)
+		return
+	}
+
+	if post.Visibility == "private" && post.UserID != userID &&
+		(!post.TargetWorker.Valid || post.TargetWorker.Int64 != userID) &&
+		(!post.AcceptedBy.Valid || post.AcceptedBy.Int64 != userID) {
+		postJSON(w, 404, map[string]string{"error": "post not found"})
 		return
 	}
 
@@ -351,6 +388,10 @@ func (c *Controller) PreparePostFunding(w http.ResponseWriter, r *http.Request) 
 	plan, err := pb.NewSolanaServiceClient(c.rpc).PrepareEscrow(ctx, agreement(post, version))
 	if err != nil {
 		escrowError(w, err)
+		return
+	}
+	if plan.Reviewer != post.PosterWallet {
+		postJSON(w, 502, map[string]string{"error": "funding reviewer must be the requester wallet; restart the Rust service"})
 		return
 	}
 

@@ -131,8 +131,8 @@ func TestTaskProfilesAndMenuRender(t *testing.T) {
 			posts:  []api.Post{post},
 		}
 
-		rows := strings.Join(m.detailRows(), "\n")
-		if !strings.Contains(rows, "Posted by  @requester") ||
+		rows := ansi.Strip(strings.Join(m.detailRows(), "\n"))
+		if !strings.Contains(rows, "Requester  @requester") ||
 			!strings.Contains(rows, "Worker     @worker") ||
 			!strings.Contains(rows, "https://github.com/requester") {
 			t.Fatal("task participants need their public identities")

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/rajandhamala/Maruvo/db/sqlc"
 )
@@ -108,10 +107,7 @@ func (c *Controller) WorkspaceFileSocket(w http.ResponseWriter, r *http.Request)
 			break
 		}
 
-		file, err = c.queries.GetWorkspaceFile(ctx, db.GetWorkspaceFileParams{ID: id, PostID: postID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = &workspaceFailure{404, "file not found"}
-		}
+		file, err = c.workspaceDownload(ctx, r, postID, userID, id)
 
 		if err != nil {
 			break

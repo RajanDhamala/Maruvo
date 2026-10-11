@@ -14,4 +14,6 @@ func UserRouter(app *http.ServeMux, ctrl *controller.Controller) {
 
 	app.HandleFunc("GET /ws", ctrl.Auth(ctrl.WsHandler))
 	app.HandleFunc("POST /demo", ctrl.Demo)
+	app.HandleFunc("GET /me/email-notifications", ctrl.Auth(ctrl.EmailPreferences))
+	app.HandleFunc("PUT /me/email-notifications", ctrl.Auth(ctrl.EmailPreferences))
 }

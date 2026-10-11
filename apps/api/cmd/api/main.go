@@ -58,10 +58,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	mailer, err := utils.NewMailerFromEnv()
+	if err != nil {
+		panic(err)
+	}
 	var workers sync.WaitGroup
 	workers.Go(func() { ctrl.RunEscrowMonitor(ctx) })
 	workers.Go(func() { ctrl.RunWorkspaceWorkers(ctx) })
 	workers.Go(func() { ctrl.RunDeadlineMonitor(ctx) })
+	if mailer != nil {
+		workers.Go(func() { ctrl.RunEmailWorker(ctx, mailer) })
+	}
 
 	defer func() {
 		stop()

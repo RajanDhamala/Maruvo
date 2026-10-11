@@ -70,11 +70,20 @@ func (m model) contentWidth() int {
 	}
 
 	if m.screen == workspaceScreen {
+		if m.workspaceReview {
+			return max(1, min(104, width-4))
+		}
 		return max(1, width-4)
 	}
 
 	if m.screen == newPostScreen {
 		return max(1, min(96, width-4))
+	}
+	if m.screen == detailScreen {
+		if m.fundingConfirm {
+			return max(1, min(76, width-4))
+		}
+		return max(1, min(104, width-4))
 	}
 
 	return max(1, min(88, width-4))
@@ -87,6 +96,9 @@ func (m model) bodyStart() int {
 
 	if m.screen == workspaceScreen {
 		return 4
+	}
+	if m.screen == detailScreen {
+		return 1
 	}
 
 	if m.screen == newPostScreen {

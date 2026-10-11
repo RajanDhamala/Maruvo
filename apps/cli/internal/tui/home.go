@@ -173,14 +173,14 @@ func (m model) authLayout() postLayout {
 	drawOverlay(width, l.rows, hitArea{x: x, y: inputY, width: paneWidth, height: homePromptHeight}, rows)
 	l.hit(x, inputY, paneWidth, homePromptHeight, "prompt", 0)
 
-	hint := "/ commands · Tab select · Ctrl+g GitHub · Ctrl+o Google"
+	hint := "/ commands · Tab select"
 	if m.loading {
-		hint = "Waiting for sign-in · Ctrl+c quit"
+		hint = "Waiting for sign-in"
 	}
 
-	l.homeCenter(inputY+homePromptHeight, muted(hint), width)
+	l.homeCenter(inputY+homePromptHeight, muted(compactHint(hint, paneWidth)), width)
 	foot := align(muted(ansi.Truncate(plain(m.homePath), max(1, width-24), "…")),
-		muted("Ctrl+c quit"), width-4)
+		"", width-4)
 	l.rows[height-2] = "  " + foot
 
 	return l
@@ -189,20 +189,31 @@ func (m model) authLayout() postLayout {
 func homePromptRows(field textField, width int, active bool, mode, submit string) []string {
 	text := field.render(width-5, active)
 	if field.value == "" {
-		text = muted("Describe a task…")
+		placeholder := "Describe a task…"
+		if strings.HasPrefix(mode, "Agent") {
+			placeholder = "Ask the agent…"
+		}
+
+		text = muted(placeholder)
 		if active {
-			text = "\x1b[7mD\x1b[0m" + muted("escribe a task…")
+			text = "\x1b[7m" + placeholder[:1] + "\x1b[0m" + muted(placeholder[1:])
 		}
 	}
 
-	meta := align(muted(mode), submit, width-4)
+	return promptCardRows([]string{text}, width, active, mode, submit, false)
+}
 
-	rows := []string{
-		inputRow("", width-1),
-		inputRow(" "+text, width-1),
-		inputRow("", width-1),
-		inputRow(" "+meta, width-1),
-		inputRow("", width-1),
+func promptCardRows(text []string, width int, active bool, mode, submit string, compact bool) []string {
+	rows := []string{inputRow("", width-1)}
+	for _, line := range text {
+		rows = append(rows, inputRow(" "+line, width-1))
+	}
+	if !compact {
+		rows = append(rows, inputRow("", width-1))
+	}
+	rows = append(rows, inputRow(" "+align(muted(mode), submit, width-4), width-1))
+	if !compact {
+		rows = append(rows, inputRow("", width-1))
 	}
 	for i, row := range rows {
 		rail := muted("│")

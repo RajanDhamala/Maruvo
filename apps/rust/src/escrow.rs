@@ -114,6 +114,7 @@ impl EscrowClient {
             .map_err(|_| Status::invalid_argument("invalid agreement hash"))?;
         if request.post_id == 0
             || request.lamports > i64::MAX as u64
+            || poster == Pubkey::default()
             || poster == worker
             || worker == Pubkey::default()
         {
@@ -136,7 +137,7 @@ impl EscrowClient {
                 post_id: request.post_id,
                 amount: request.lamports,
                 worker,
-                reviewer: self.reviewer,
+                reviewer: poster,
                 agreement_hash,
             }
             .data(),
@@ -167,7 +168,7 @@ impl EscrowClient {
             ),
             address: address.to_string(),
             program_id: self.program.to_string(),
-            reviewer: self.reviewer.to_string(),
+            reviewer: poster.to_string(),
             network: self.network.clone(),
             last_valid_block_height: block["value"]["lastValidBlockHeight"]
                 .as_u64()
@@ -236,12 +237,9 @@ impl EscrowClient {
         request: CheckEscrowRequest,
         recovery: bool,
     ) -> Result<String, Status> {
-        if request.program_id != self.program.to_string()
-            || request.reviewer != self.reviewer.to_string()
-            || request.network != self.network
-        {
+        if request.program_id != self.program.to_string() || request.network != self.network {
             return Err(Status::failed_precondition(
-                "escrow network or reviewer configuration changed",
+                "escrow network or program configuration changed",
             ));
         }
         let agreement = request
@@ -249,6 +247,12 @@ impl EscrowClient {
             .ok_or_else(|| Status::invalid_argument("missing agreement"))?;
         let poster = key(&agreement.poster)?;
         let worker = key(&agreement.worker)?;
+        let reviewer = key(&request.reviewer)?;
+        if reviewer == Pubkey::default() || (reviewer != poster && reviewer != self.reviewer) {
+            return Err(Status::failed_precondition(
+                "reviewer must be the requester or the configured legacy reviewer",
+            ));
+        }
         let (address, _) = Pubkey::find_program_address(
             &[b"escrow", poster.as_ref(), &agreement.post_id.to_le_bytes()],
             &self.program,
@@ -298,7 +302,7 @@ impl EscrowClient {
                 || escrow.post_id != agreement.post_id
                 || escrow.poster != poster
                 || escrow.worker != worker
-                || escrow.reviewer != self.reviewer
+                || escrow.reviewer != reviewer
                 || escrow.amount != agreement.lamports
                 || escrow.agreement_hash.as_slice() != agreement.agreement_hash
             {
@@ -385,6 +389,7 @@ impl EscrowClient {
             ));
         }
         self.verify_network().await?;
+        let reviewer = key(&escrow.reviewer)?;
         let agreement = escrow
             .agreement
             .ok_or_else(|| Status::invalid_argument("missing agreement"))?;
@@ -396,7 +401,7 @@ impl EscrowClient {
         let instruction = Instruction {
             program_id: self.program,
             accounts: accounts::Settle {
-                reviewer: self.reviewer,
+                reviewer,
                 escrow: key(&escrow.address)?,
                 poster: key(&agreement.poster)?,
                 worker: key(&agreement.worker)?,
@@ -414,7 +419,7 @@ impl EscrowClient {
         )
         .map_err(|_| Status::unavailable("invalid blockhash"))?;
         let mut transaction =
-            Transaction::new_unsigned(Message::new(&[instruction], Some(&self.reviewer)));
+            Transaction::new_unsigned(Message::new(&[instruction], Some(&reviewer)));
         transaction.message.recent_blockhash = hash;
         let fee = self.rpc("getFeeForMessage", json!([STANDARD.encode(transaction.message.serialize()), {"commitment":"confirmed"}])).await?;
         Ok(PreparedSettlement {

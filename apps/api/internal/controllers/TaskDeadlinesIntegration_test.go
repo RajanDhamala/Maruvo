@@ -190,6 +190,15 @@ func TestTaskDeadlineLifecycle(t *testing.T) {
 	if err := json.Unmarshal(quoteData, &quote); err != nil || quote.Escrow.AgreementVersion != 3 {
 		t.Fatal("new timed tasks require v3 funding terms")
 	}
+	if quote.Escrow.Reviewer != wallets[0] {
+		t.Fatal("new funding must give review authority to the requester")
+	}
+	for i := range users {
+		allowed, err := c.queries.IsPostReviewer(ctx, db.IsPostReviewerParams{PostID: post.ID, UserID: users[i]})
+		if err != nil || allowed != (i == 0) {
+			t.Fatalf("requester review authority for user %d: %t %v", i, allowed, err)
+		}
+	}
 
 	if _, err := pool.Exec(ctx, "DELETE FROM post_escrows WHERE post_id=$1", post.ID); err != nil {
 		t.Fatal(err)

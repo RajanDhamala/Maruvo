@@ -24,7 +24,7 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 
 	profile := m.profileArea()
-	if msg.Y == 1 && msg.X >= profile.x && msg.X < profile.x+profile.width {
+	if m.screen != detailScreen && msg.Y == 1 && msg.X >= profile.x && msg.X < profile.x+profile.width {
 		m.dashboard.filterOpen = false
 		m.profileOpen = !m.profileOpen
 
@@ -62,7 +62,8 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.openPosts(m.own)
 	}
 
-	if msg.Y == 3 && m.screen != workspaceScreen && m.screen != newPostScreen && !m.onDashboard() {
+	if msg.Y == 3 && m.screen != workspaceScreen && m.screen != detailScreen &&
+		m.screen != newPostScreen && !m.onDashboard() {
 		x := 2
 		for i, name := range tabNames {
 			if msg.X >= x && msg.X < x+len(name) {
@@ -114,7 +115,7 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "dashboard-scope", "dashboard-level", "dashboard-wallet", "dashboard-task",
 			"dashboard-submit", "dashboard-search", "dashboard-prompt", "dashboard-filter", "dashboard-empty",
-			"dashboard-sidebar":
+			"dashboard-sidebar", "dashboard-create":
 			return m.updateDashboardMouse(hit, x, y)
 		case "refresh":
 			return m.updatePosts(tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -228,12 +229,20 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			}
 
 			return m.updatePosts(tea.KeyPressMsg{Code: rune(hit.action[0]), Text: hit.action})
+		case "workspace-control":
+			return m.openAgentControls()
+		case "workspace-agent", "workspace-invite", "workspace-connect-agent", "workspace-continue":
+			return m.workspaceCommand(hit.action)
 		case "workspace-tab":
 			return m.workspaceCommand("tab")
 		case "workspace-file":
 			m.fileSelection = hit.index
 		case "workspace-download":
 			return m.downloadWorkspaceFile(hit.index)
+		case "workspace-activity":
+			return m.toggleWorkspaceActivity(hit.index)
+		case "workspace-tool":
+			return m.toggleWorkspaceTool(hit.index)
 		case "local-file":
 			m.composer.selection = hit.index
 			return m.attachSuggestion()
@@ -243,6 +252,8 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 				m.composer.attachments[hit.index+1:]...)
 		case "workspace-send":
 			return m.updatePosts(tea.KeyPressMsg{Code: tea.KeyEnter})
+		case "workspace-chat-send":
+			return m.sendChat()
 		case "status":
 			m.statusChoice = hit.index
 		case "save-status":

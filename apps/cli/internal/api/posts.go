@@ -20,6 +20,8 @@ type PublicUser struct {
 }
 
 type Post struct {
+	Remote               RemoteStatus `json:"remote"`
+	TargetWorker         *int64       `json:"target_worker,omitempty"`
 	Poster               *PublicUser  `json:"poster"`
 	Worker               *PublicUser  `json:"worker"`
 	Description          string       `json:"description"`
@@ -56,6 +58,7 @@ type TaskDeadline struct {
 }
 
 type CreatePostPayload struct {
+	TargetWorker         *int64    `json:"target_worker,omitempty"`
 	Description          string    `json:"description"`
 	AcceptanceCriteria   string    `json:"acceptance_criteria"`
 	InputFiles           []string  `json:"input_files"`

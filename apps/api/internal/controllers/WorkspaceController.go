@@ -190,6 +190,12 @@ func (c *Controller) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	control, err := agentControl(r.Context(), q, id, userID)
+	if err != nil {
+		workspaceError(w, err)
+		return
+	}
+
 	if err = tx.Commit(r.Context()); err != nil {
 		workspaceError(w, err)
 		return
@@ -204,13 +210,14 @@ func (c *Controller) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 	c.writePost(
 		w, r, 200, post,
 		map[string]any{
-			"workspace":  workspace,
-			"files":      files,
-			"events":     events,
-			"cursor":     cursor,
-			"escrow":     funding,
-			"can_review": canReview,
-			"settlement": settlement,
+			"agent_control": control,
+			"workspace":     workspace,
+			"files":         files,
+			"events":        events,
+			"cursor":        cursor,
+			"escrow":        funding,
+			"can_review":    canReview,
+			"settlement":    settlement,
 			"context": taskWorkspaceContext(
 				r.Context(),
 				post,
@@ -826,14 +833,7 @@ func (c *Controller) DownloadWorkspaceFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	file, err := c.queries.GetWorkspaceFile(
-		r.Context(),
-		db.GetWorkspaceFileParams{ID: pgtype.UUID{Bytes: fileID, Valid: true}, PostID: id},
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		postJSON(w, 404, map[string]string{"error": "file not found"})
-		return
-	}
+	file, err := c.workspaceDownload(r.Context(), r, id, userID, pgtype.UUID{Bytes: fileID, Valid: true})
 
 	if err != nil {
 		workspaceError(w, err)

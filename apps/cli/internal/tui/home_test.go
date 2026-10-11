@@ -130,7 +130,7 @@ func TestHomeResponsiveStates(t *testing.T) {
 
 			view := ansi.Strip(m.View().Content)
 			for _, text := range []string{"Sign in with GitHub", "Sign in with Google", "Describe a task…",
-				"~/Desktop/aislop", "Ctrl+c quit"} {
+				"~/Desktop/aislop", "F1 help"} {
 				if !strings.Contains(view, text) {
 					t.Fatalf("%v %s: missing %q", size, state, text)
 				}

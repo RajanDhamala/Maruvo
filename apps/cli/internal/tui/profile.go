@@ -88,9 +88,9 @@ func (m model) drawProfile(lines []string) {
 
 	email = ansi.Truncate(email, inside-2, "…")
 
-	walletLabel := "[Connect wallet]"
+	walletLabel := "[Wallet · w / browser · b]"
 	if m.walletAddress != "" {
-		walletLabel = "Wallet " + m.walletAddress[:min(8, len(m.walletAddress))] + "…"
+		walletLabel = "Wallet " + m.walletAddress[:min(8, len(m.walletAddress))] + "… · browser b"
 	}
 
 	linkLabel := "[Connect GitHub · g]"
@@ -125,6 +125,10 @@ func (m model) updateProfile(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
+	case "b":
+		m.profileOpen, m.loading, m.err = false, true, nil
+		m.notice = "Choose Phantom or Solflare in your browser."
+		return m, m.connectBrowserWallet()
 	case "g":
 		return m.beginGitHubLink()
 	case "w":
@@ -152,6 +156,7 @@ func (m model) beginGitHubLink() (tea.Model, tea.Cmd) {
 
 func (m model) beginLogout() (tea.Model, tea.Cmd) {
 	m.stopWorkspace()
+	m.stopInvites()
 	m.profileOpen, m.loading, m.err = false, true, nil
 
 	return m, m.logout()

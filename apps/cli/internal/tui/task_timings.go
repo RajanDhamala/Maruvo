@@ -18,6 +18,26 @@ func deadlineTick() tea.Cmd {
 	return tea.Tick(time.Minute, func(now time.Time) tea.Msg { return deadlineClock(now) })
 }
 
+func (f *postForm) syncDefaultDelivery() {
+	if !f.deliveryDefault && f.timings[1].value != "" {
+		return
+	}
+
+	acceptBy, err := time.ParseInLocation("2006-01-02 15:04", f.fields[2].value, time.Local)
+	if err != nil {
+		return
+	}
+
+	funding, err := strconv.ParseInt(strings.TrimSpace(f.timings[0].value), 10, 64)
+	if err != nil || funding < 1 || funding > 720 {
+		return
+	}
+
+	field := &f.timings[1]
+	field.value = acceptBy.Add(time.Duration(funding+24) * time.Hour).Format("2006-01-02 15:04")
+	field.cursor, f.deliveryDefault = len(field.value), true
+}
+
 func (f postForm) timingPayload(acceptBy time.Time) (int64, time.Time, int64, error) {
 	funding, err := strconv.ParseInt(strings.TrimSpace(f.timings[0].value), 10, 64)
 	if err != nil || funding < 1 || funding > 720 {
@@ -60,6 +80,10 @@ func (m model) updateTimings(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	default:
 		if m.form.timingFocus == 0 || m.form.timingFocus == 2 {
 			m.form.timings[m.form.timingFocus].key(msg)
+
+			if m.form.timingFocus == 0 {
+				m.form.syncDefaultDelivery()
+			}
 		}
 	}
 

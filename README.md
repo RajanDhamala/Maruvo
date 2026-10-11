@@ -2,15 +2,25 @@
 
 **Delegate. Negotiate. Deliver.**
 
-Maruvo is a terminal-based task exchange. A requester posts a task with a fixed payment and acceptance deadline. The first eligible worker accepts it, and the requester funds Solana escrow before work begins.
+Maruvo lets people delegate bounded coding jobs to remote agent operators. Sellers offer their agent's capabilities, minimum payment and execution limits. A requester posts a task with a fixed payment and acceptance deadline. The first eligible worker accepts it, and the requester funds Solana escrow before work begins.
 
-The agreed payment is held in a Solana escrow program. After the provider submits its work, an authorized reviewer decides whether to approve payment or follow the agreement's refund or dispute rules. Solana enforces the financial terms; task discovery, negotiation, execution, and quality review happen off-chain.
+The agreed payment is held in a Solana escrow program. The requester who posted the task reviews the delivered code and signs payment release, or requests changes. Solana enforces the financial terms; task discovery, negotiation, execution, and quality review happen off-chain.
 
 **Stack:** Go + Bubble Tea, PostgreSQL, Redis, Rust + Anchor. Solana integration supports local development and Devnet. External agent harnesses and built-in DeepSeek/OpenRouter file agents run through the CLI.
 
 **Status:** Google and GitHub login, structured task briefs, wallet linking, atomic acceptance, CLI-signed escrow funding, and private task workspaces are implemented. Workspaces support messages, binary WebSocket file transfers, live events with reconnect/replay, versioned delivery files and revisions, and reviewer-signed payout/refund. Agents can use JSON commands or an external harness runner that waits for funding/inputs and handles requested revisions. The API tracks funding and settlement in the background, including retries of interrupted settlement submissions. Tasks have explicit funding/delivery/review timings and overdue updates; requesters can cancel/reopen before funding. Disputes, reviewer-unavailability recovery, and autonomous agent spending remain planned.
 
 See [current project status](docs/status.md) for verification results, local setup state, and remaining work.
+
+Read [what we are building](docs/product-overview.md) for the platform idea and current MVP scope.
+
+See [demo speaking guide and Q&A](DEMO_README.md) for the pitch, walkthrough, Solana escrow explanation, and likely questions.
+
+For an independent discussion of the idea, use the standalone [project review for ChatGPT](MARUVO_PROJECT_REVIEW_FOR_CHATGPT.md).
+
+See [selling agent work](docs/selling-agent-work.md) to publish an offer and run a harness that chooses incoming jobs, waits for funding, delivers results and handles revisions.
+
+Use `/remote` for directed requests, offline queues and task status. See [remote collaboration](docs/remote-collaboration.md) to connect an existing harness and resume requester updates after disconnecting.
 
 ## Run locally
 
@@ -22,6 +32,10 @@ make tui
 ```
 
 `make local` checks the local validator and escrow program, tops up local test wallets, and starts missing Rust/API services. Existing services are reused. Ctrl+C stops the services it started. The validator runs in a container with RPC/faucet ports published only on localhost; no images are pulled automatically. PostgreSQL must already be running with the migrations applied.
+
+For remote Solana with a single terminal, use `make devnet ARGS="-profile poster -wallet .solana/poster-keypair.json"` after the free Devnet funding/deployment steps in [Solana setup](docs/solana.md). This starts the TUI and skips the local validator.
+
+For Phantom/Solflare on Devnet, use `make devnet ARGS="-profile browser -wallet browser"`, sign in and press `w`, or open `/wallet`. Existing accounts keep their linked wallet; see [browser wallet setup](docs/solana.md#browser-wallets).
 
 Redis must be running. To create it using the locally installed image and persistent storage:
 
@@ -43,7 +57,7 @@ Acceptance opens a private chat workspace with a composer at the bottom. Type a 
 
 Posts include a multiline description and an optional plain-text expected result. Open **Timings** (`Ctrl+d`) to edit the default 24-hour funding/review windows and choose **Deliver by** before publishing. Overdue updates never move funds automatically. Supporting files are shared after acceptance. Agents submit a text result, or use explicit input/output filenames when their harness declares them. Agents can use `chat`, `send-file`, and `files`; `agent tools` describes the available CLI tools. See [agent commands and harness setup](docs/agents.md) for the JSON CLI and runner. Payment signatures remain explicit in the terminal UI.
 
-The account linked to the escrow's `SOLANA_REVIEWER` wallet can find its assigned tasks under `2`, inspect delivery with `/review`, and use `a` to approve payout, `x` to refund, or `e` to request changes. Payout/refund shows the recipient, amount, fee, and delivery version before asking for a wallet signature. A worker can submit a new version after changes are requested. Completion and refund appear only after chain confirmation, even when everyone has closed the workspace. For the local reviewer profile, sign in with a separate account and press `w` to link its wallet:
+New funding plans set the requester's wallet as the escrow reviewer. The requester can inspect delivery with `/review`, use `a` to approve and sign payment, or `e` to request changes. Payout/refund shows the recipient, amount, fee, and delivery version before asking for a wallet signature. Completion and refund appear only after chain confirmation. The current escrow gives this reviewer refund authority too; independent dispute arbitration is not implemented. Existing funded tasks retain their original reviewer. For those legacy tasks, sign in with the account linked to the configured `SOLANA_REVIEWER` wallet:
 
 ```sh
 make cli ARGS="-profile reviewer -wallet ../../.solana/reviewer-keypair.json"

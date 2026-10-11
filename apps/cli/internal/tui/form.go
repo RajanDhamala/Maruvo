@@ -23,6 +23,8 @@ type textField struct {
 }
 
 type postForm struct {
+	targetWorker      *int64
+	targetName        string
 	fields            [5]textField
 	focus             int
 	level             int
@@ -32,6 +34,7 @@ type postForm struct {
 	descriptionFile   string
 	descriptionSource int
 	timings           [3]textField
+	deliveryDefault   bool
 	timingOpen        bool
 	timingFocus       int
 }
@@ -44,7 +47,7 @@ const (
 func newPostForm() postForm {
 	deadline := time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04")
 
-	return postForm{timings: [3]textField{
+	form := postForm{deliveryDefault: true, timings: [3]textField{
 		{value: "24", cursor: 2, limit: 3, digitsOnly: true},
 		{limit: 16},
 		{value: "24", cursor: 2, limit: 3, digitsOnly: true},
@@ -55,6 +58,9 @@ func newPostForm() postForm {
 		{limit: api.MaxDescriptionCharacters, byteLimit: api.MaxDescriptionBytes, multiline: true},
 		{limit: 4000, multiline: true},
 	}}
+	form.syncDefaultDelivery()
+
+	return form
 }
 
 func (f *textField) insert(text string) {
@@ -164,6 +170,7 @@ func (f postForm) payload() (api.CreatePostPayload, error) {
 	}
 
 	return api.CreatePostPayload{
+		TargetWorker:         f.targetWorker,
 		Title:                title,
 		CostLamports:         cost,
 		EndTime:              deadline.UTC(),
@@ -276,6 +283,8 @@ func (m model) editDescription() model {
 }
 
 func (m model) submitPost() (tea.Model, tea.Cmd) {
+	m.form.syncDefaultDelivery()
+
 	payload, err := m.form.payload()
 	if err != nil {
 		m.err = err

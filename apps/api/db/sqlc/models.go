@@ -100,6 +100,21 @@ func (ns NullPostStatus) Value() (driver.Value, error) {
 	return string(ns.PostStatus), nil
 }
 
+type AgentChat struct {
+	UserID    int64              `json:"user_id"`
+	Profile   string             `json:"profile"`
+	ID        string             `json:"id"`
+	Title     string             `json:"title"`
+	Directory string             `json:"directory"`
+	Provider  string             `json:"provider"`
+	Model     string             `json:"model"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Revision  int64              `json:"revision"`
+	Archived  bool               `json:"archived"`
+	Snapshot  json.RawMessage    `json:"snapshot"`
+}
+
 type AgentGrant struct {
 	ID          pgtype.UUID        `json:"id"`
 	OwnerID     int64              `json:"owner_id"`
@@ -110,6 +125,37 @@ type AgentGrant struct {
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentOffer struct {
+	UserID            int64              `json:"user_id"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	Capabilities      []string           `json:"capabilities"`
+	MinLamports       int64              `json:"min_lamports"`
+	JobTimeoutSeconds int64              `json:"job_timeout_seconds"`
+	LeaseHash         string             `json:"lease_hash"`
+	AvailableUntil    pgtype.Timestamptz `json:"available_until"`
+	Accepting         bool               `json:"accepting"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EmailNotification struct {
+	ID            int64              `json:"id"`
+	PostID        int64              `json:"post_id"`
+	EventID       int64              `json:"event_id"`
+	RecipientID   int64              `json:"recipient_id"`
+	Recipient     string             `json:"recipient"`
+	Subject       string             `json:"subject"`
+	Body          string             `json:"body"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	SentAt        pgtype.Timestamptz `json:"sent_at"`
+}
+
+type EmailPreference struct {
+	UserID  int64 `json:"user_id"`
+	Enabled bool  `json:"enabled"`
 }
 
 type Post struct {
@@ -135,6 +181,15 @@ type Post struct {
 	FundBy               pgtype.Timestamptz `json:"fund_by"`
 	DeliverBy            pgtype.Timestamptz `json:"deliver_by"`
 	ReviewWindowSeconds  int64              `json:"review_window_seconds"`
+	TargetWorker         pgtype.Int8        `json:"target_worker"`
+	Visibility           string             `json:"visibility"`
+}
+
+type PostAgentControl struct {
+	PostID    int64              `json:"post_id"`
+	OwnerID   int64              `json:"owner_id"`
+	Mode      string             `json:"mode"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PostEscrow struct {
@@ -179,6 +234,16 @@ type PostWorkspace struct {
 	ReviewNote        string             `json:"review_note"`
 	DeliveryFiles     []pgtype.UUID      `json:"delivery_files"`
 	ReviewBy          pgtype.Timestamptz `json:"review_by"`
+	RefundBlocked     bool               `json:"refund_blocked"`
+}
+
+type RemoteActivity struct {
+	PostID      int64              `json:"post_id"`
+	RunID       string             `json:"run_id"`
+	State       string             `json:"state"`
+	Detail      string             `json:"detail"`
+	ActiveUntil pgtype.Timestamptz `json:"active_until"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskDeadlineNotice struct {
@@ -212,6 +277,56 @@ type WalletChallenge struct {
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
+type WorkArtifact struct {
+	ID        pgtype.UUID `json:"id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	Content   []byte      `json:"content"`
+}
+
+type WorkEvent struct {
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ID           int64              `json:"id"`
+	AssignmentID string             `json:"assignment_id"`
+	Kind         string             `json:"kind"`
+	ActorID      int64              `json:"actor_id"`
+	GrantID      string             `json:"grant_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkGrant struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	OwnerID        int64              `json:"owner_id"`
+	Name           string             `json:"name"`
+	TokenHash      string             `json:"token_hash"`
+	Permissions    []string           `json:"permissions"`
+	AllowedMembers []int64            `json:"allowed_members"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type WorkProject struct {
+	ID        pgtype.UUID        `json:"id"`
+	OwnerID   int64              `json:"owner_id"`
+	PostID    pgtype.Int8        `json:"post_id"`
+	State     json.RawMessage    `json:"state"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkReceipt struct {
+	OwnerID     int64           `json:"owner_id"`
+	OperationID string          `json:"operation_id"`
+	RequestHash string          `json:"request_hash"`
+	ProjectID   pgtype.UUID     `json:"project_id"`
+	Response    json.RawMessage `json:"response"`
+}
+
+type WorkSubjob struct {
+	PostID       int64       `json:"post_id"`
+	ProjectID    pgtype.UUID `json:"project_id"`
+	AssignmentID string      `json:"assignment_id"`
+}
+
 type WorkspaceEvent struct {
 	PostID    int64              `json:"post_id"`
 	ID        int64              `json:"id"`
@@ -233,4 +348,16 @@ type WorkspaceFile struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	Purpose      string             `json:"purpose"`
 	AgentGrantID pgtype.UUID        `json:"agent_grant_id"`
+}
+
+type WorkspaceFileAccess struct {
+	PostID            int64              `json:"post_id"`
+	FileID            pgtype.UUID        `json:"file_id"`
+	UserID            int64              `json:"user_id"`
+	SubmissionVersion int64              `json:"submission_version"`
+	AgentGrantID      pgtype.UUID        `json:"agent_grant_id"`
+	Sha256            string             `json:"sha256"`
+	Size              int64              `json:"size"`
+	ProtectsRefund    bool               `json:"protects_refund"`
+	AccessedAt        pgtype.Timestamptz `json:"accessed_at"`
 }

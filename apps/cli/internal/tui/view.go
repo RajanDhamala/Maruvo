@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -9,12 +10,40 @@ import (
 )
 
 func (m model) View() tea.View {
+	if m.invitations.pending != nil {
+		return m.inviteView()
+	}
+	if m.workSetup.open {
+		return m.workSetupView()
+	}
+	if m.permissions.open {
+		return m.permissionsView()
+	}
+	if m.shortcutsOpen {
+		return m.shortcutsView()
+	}
+	if m.localAgent.open && m.localAgent.approval != nil {
+		return m.actionApprovalView()
+	}
+
+	if m.agentControls.open {
+		return m.agentControlsView()
+	}
+
 	if m.providers.open {
 		return m.providersView()
 	}
 
-	if m.localAgent.open {
-		return m.localAgentView()
+	if m.remote.open {
+		return m.remoteView()
+	}
+
+	if m.board.open {
+		return m.boardView()
+	}
+
+	if m.localAgentVisible() {
+		return m.commandView(m.localAgentView())
 	}
 
 	if !m.demo {
@@ -37,7 +66,8 @@ func (m model) View() tea.View {
 		s += fmt.Sprintf("Connected to %s\n%s\n", m.response.Service, m.response.Message)
 	}
 
-	s += "\nEnter / r: send again    q: quit\n"
+	width, _ := m.dimensions()
+	s += "\n" + compactHint("Enter / r send again · q quit", max(1, width-4)) + "\n"
 	view := tea.NewView(s)
 	view.AltScreen = true
 
@@ -104,6 +134,8 @@ func (m model) frame(body []string, footer string) tea.View {
 	lines := []string{"", "  " + header, "", "  " + tabs, "  " + divider, ""}
 	if m.screen == workspaceScreen {
 		lines = []string{"", "  " + header, "  " + divider, ""}
+	} else if m.screen == detailScreen {
+		lines = []string{""}
 	}
 
 	for i := 0; i < m.bodyHeight(); i++ {
@@ -129,9 +161,11 @@ func (m model) frame(body []string, footer string) tea.View {
 	}
 
 	if m.picker.open {
-		footer = muted("Arrows select   PgUp/PgDn month   Tab time   Enter apply   Esc cancel")
+		footer = muted(
+			compactHint("Arrows select · PgUp/PgDn month · Tab time · Enter apply · Esc cancel", inner),
+		)
 		if width < 78 {
-			footer = muted("Arrows · Tab time · Enter apply · Esc cancel")
+			footer = muted(compactHint("Arrows · Tab time · Enter apply · Esc cancel", inner))
 		}
 	} else if m.profileOpen {
 		footer = "w wallet · Enter log out · Esc close"
@@ -139,13 +173,20 @@ func (m model) frame(body []string, footer string) tea.View {
 			footer = "g connect GitHub · " + footer
 		}
 
-		footer = muted(footer)
+		footer = muted(compactHint(footer, inner))
 	} else if m.err != nil && m.screen == workspaceScreen {
 		footer = warning(plain(m.err.Error()))
 	} else if m.notice != "" && m.screen == workspaceScreen {
-		footer = accent(m.notice) + "   " + muted(footer)
-	} else {
+		footer = accent(m.notice) + "   " + muted(compactHint(footer, inner))
+	} else if m.screen == detailScreen && width >= 72 && len(m.posts) != 0 &&
+		!m.fundingConfirm && !m.deleting && !m.editingStatus && m.recovering == "" {
+		footer = compactHint(footer, inner)
+		if m.detailScrollMax() > 0 {
+			footer = align(footer, "PgUp/PgDn scroll", inner)
+		}
 		footer = muted(footer)
+	} else {
+		footer = muted(compactHint(footer, inner))
 	}
 
 	statusLine := ""
@@ -165,6 +206,8 @@ func (m model) frame(body []string, footer string) tea.View {
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
+	view.BackgroundColor = color.RGBA{R: 10, G: 10, B: 10, A: 255}
+	view.ForegroundColor = color.RGBA{R: 238, G: 238, B: 238, A: 255}
 
 	return view
 }

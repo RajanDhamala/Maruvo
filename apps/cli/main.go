@@ -20,6 +20,7 @@ import (
 	"github.com/rajandhamala/Maruvo/cli/internal/providers"
 	"github.com/rajandhamala/Maruvo/cli/internal/tui"
 	walletconfig "github.com/rajandhamala/Maruvo/cli/internal/wallet"
+	"github.com/rajandhamala/Maruvo/cli/internal/work"
 )
 
 func main() {
@@ -36,11 +37,6 @@ func main() {
 	}
 
 	command := commandInvocation(os.Args[1:])
-	if command != "provider" && command != "chat" {
-		if err := walletconfig.LoadConfig(); err != nil {
-			fail(fmt.Errorf("load local Solana configuration: %w", err))
-		}
-	}
 
 	defaultURL := os.Getenv("API_URL")
 	if defaultURL == "" {
@@ -60,7 +56,7 @@ func main() {
 	demo := flags.Bool("demo", false, "show the existing Go/Rust connection demo")
 	profile := flags.String("profile", "default", "saved login profile (e.g. poster or worker)")
 
-	wallet := flags.String("wallet", "", "wallet keypair file (saved separately for each profile)")
+	wallet := flags.String("wallet", "", "wallet keypair file or browser for Phantom/Solflare (saved per profile)")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			if agentMode {
@@ -75,6 +71,14 @@ func main() {
 	}
 
 	args := flags.Args()
+
+	bridgeMode := len(args) > 1 && args[0] == "agent" && args[1] == "bridge"
+	if command != "provider" && command != "chat" && command != "work" && !bridgeMode {
+		if err := walletconfig.LoadConfig(); err != nil {
+			fail(fmt.Errorf("load local Solana configuration: %w", err))
+		}
+	}
+
 	if len(args) > 0 && (args[0] == "provider" || args[0] == "chat") {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
@@ -88,7 +92,30 @@ func main() {
 		if args[0] == "provider" {
 			err = providers.Commands(ctx, *profile, args[1:], os.Stdin, os.Stdout, os.Stderr)
 		} else {
-			err = providers.ChatCommand(ctx, *profile, args[1:], os.Stdin, os.Stdout, os.Stderr)
+			*apiURL = strings.TrimRight(*apiURL, "/")
+
+			parsed, parseErr := url.Parse(*apiURL)
+			if parseErr != nil || parsed.Host == "" ||
+				(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+				parsed.RawQuery != "" ||
+				parsed.Fragment != "" ||
+				parsed.User != nil {
+				fail(
+					errors.New(
+						"API URL must be an http(s) base URL without credentials, a query or fragment",
+					),
+				)
+			}
+
+			err = providers.ChatCommand(
+				ctx,
+				*profile,
+				args[1:],
+				os.Stdin,
+				os.Stdout,
+				os.Stderr,
+				api.NewClient(*apiURL),
+			)
 		}
 
 		if err != nil {
@@ -112,7 +139,7 @@ func main() {
 		fail(agent.InvalidArgument(err.Error()))
 	}
 
-	if !*check && !*demo && !listTools {
+	if !*check && !*demo && !listTools && !bridgeMode && command != "work" {
 		chosen := *wallet
 		if chosen == "" {
 			chosen = explicitWallet
@@ -132,7 +159,11 @@ func main() {
 		}
 
 		if chosen != "" {
-			path, err := filepath.Abs(chosen)
+			path := chosen
+			var err error
+			if chosen != "browser" {
+				path, err = filepath.Abs(chosen)
+			}
 			if err != nil {
 				fail(err)
 			}
@@ -148,10 +179,10 @@ func main() {
 	var runErr error
 
 	if len(args) > 0 {
-		if args[0] != "agent" {
+		if args[0] != "agent" && args[0] != "work" {
 			fmt.Fprintln(
 				os.Stderr,
-				"unknown command; use agent, provider, chat, or run without a command for the terminal UI",
+				"unknown command; use agent, work, provider, chat, or run without a command for the terminal UI",
 			)
 			os.Exit(1)
 		}
@@ -159,7 +190,11 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
-		runErr = agent.Run(ctx, api.NewClient(*apiURL), *profile, args[1:], os.Stdout, os.Stderr)
+		if args[0] == "work" {
+			runErr = work.Run(ctx, api.NewClient(*apiURL), *profile, args[1:], os.Stdout, os.Stderr)
+		} else {
+			runErr = agent.Run(ctx, api.NewClient(*apiURL), *profile, args[1:], os.Stdout, os.Stderr)
+		}
 	} else {
 		runErr = run(*apiURL, *message, *check, *demo, *profile)
 	}
@@ -170,7 +205,8 @@ func main() {
 }
 
 func agentInvocation(args []string) bool {
-	return commandInvocation(args) == "agent"
+	command := commandInvocation(args)
+	return command == "agent" || command == "work"
 }
 
 func commandInvocation(args []string) string {

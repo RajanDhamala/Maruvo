@@ -25,6 +25,9 @@ func TestAgentRouteBoundaries(t *testing.T) {
 	}{
 		{"GET /posts/{id}/workspace", "/posts/7/workspace", "7", true},
 		{"POST /posts/{id}/messages", "/posts/7/messages", "7", true},
+		{"POST /posts/{id}/activity", "/posts/7/activity", "7", true},
+		{"POST /posts/{id}/activity", "/posts/8/activity", "8", false},
+		{"GET /agent/inbox", "/agent/inbox", "", false},
 		{"POST /posts/{id}/submit", "/posts/7/submit", "7", true},
 		{"POST /posts/{id}/review/changes", "/posts/7/review/changes", "7", true},
 		{"GET /posts/{id}/workspace", "/posts/8/workspace", "8", false},
@@ -38,6 +41,8 @@ func TestAgentRouteBoundaries(t *testing.T) {
 		{"POST /posts/accept", "/posts/accept", "", false},
 		{"POST /posts/{id}/agents", "/posts/7/agents", "7", false},
 		{"GET /posts/{id}/agents", "/posts/7/agents", "7", false},
+		{"GET /posts/{id}/agent-control", "/posts/7/agent-control", "7", false},
+		{"PUT /posts/{id}/agent-control", "/posts/7/agent-control", "7", false},
 		{"POST /agents/{grant}/revoke", "/agents/anything/revoke", "", false},
 		{"POST /oauth/github/link", "/oauth/github/link", "", false},
 		{"GET /wallet", "/wallet", "", false},

@@ -17,8 +17,27 @@ import (
 var Names = []string{"deepseek", "openrouter"}
 
 type Model struct {
-	ID                  string   `json:"id"`
-	SupportedParameters []string `json:"supported_parameters,omitempty"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name,omitempty"`
+	Created             int64             `json:"created,omitempty"`
+	ContextLength       int               `json:"context_length,omitempty"`
+	SupportedParameters []string          `json:"supported_parameters,omitempty"`
+	Reasoning           *ReasoningSupport `json:"reasoning,omitempty"`
+	TopProvider         struct {
+		MaxCompletionTokens int `json:"max_completion_tokens,omitempty"`
+	} `json:"top_provider,omitempty"`
+}
+
+func (m Model) DisplayName() string {
+	if m.ID == "deepseek-flash" {
+		return "DeepSeek V4.1 Flash"
+	}
+
+	if m.Name != "" {
+		return m.Name
+	}
+
+	return m.ID
 }
 
 type Function struct {
@@ -45,12 +64,15 @@ type Message struct {
 	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
 	ToolCallID       string          `json:"tool_call_id,omitempty"`
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	Reasoning        string          `json:"reasoning,omitempty"`
 	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
+	Usage            *Usage          `json:"-"`
 }
 
 type Client struct {
 	provider, model, key, baseURL string
 	http                          *http.Client
+	options                       Options
 }
 
 func NewClient(provider, model, key string) (*Client, error) {
@@ -75,7 +97,7 @@ func NewClient(provider, model, key string) (*Client, error) {
 	return &Client{
 		provider: provider, model: model, key: key, baseURL: baseURL,
 		http: &http.Client{
-			Timeout: 2 * time.Minute,
+			Timeout: 5 * time.Minute,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return errors.New("provider redirects are not allowed")
 			},
@@ -83,13 +105,13 @@ func NewClient(provider, model, key string) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) request(ctx context.Context, method, path string, payload, result any) error {
+func (c *Client) response(ctx context.Context, method, path string, payload any) (*http.Response, error) {
 	var body io.Reader
 
 	if payload != nil {
 		data, err := json.Marshal(payload)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		body = bytes.NewReader(data)
@@ -97,7 +119,7 @@ func (c *Client) request(ctx context.Context, method, path string, payload, resu
 
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
-		return errors.New("invalid provider request")
+		return nil, errors.New("invalid provider request")
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.key)
@@ -110,25 +132,36 @@ func (c *Client) request(ctx context.Context, method, path string, payload, resu
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 
-		return fmt.Errorf("could not reach %s; check your connection and retry", c.provider)
+		return nil, fmt.Errorf("could not reach %s; check your connection and retry", c.provider)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+
 		switch resp.StatusCode {
 		case 401, 403:
-			return errors.New("provider rejected the API key; reconnect the provider")
+			return nil, errors.New("provider rejected the API key; reconnect the provider")
 		case 402:
-			return errors.New("provider credits are exhausted")
+			return nil, errors.New("provider credits are exhausted")
 		case 429:
-			return errors.New("provider rate limit reached; retry later")
+			return nil, errors.New("provider rate limit reached; retry later")
 		default:
-			return fmt.Errorf("%s request failed (HTTP %d)", c.provider, resp.StatusCode)
+			return nil, fmt.Errorf("%s request failed (HTTP %d)", c.provider, resp.StatusCode)
 		}
 	}
+
+	return resp, nil
+}
+
+func (c *Client) request(ctx context.Context, method, path string, payload, result any) error {
+	resp, err := c.response(ctx, method, path, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 	if err != nil || len(data) > 8<<20 {
@@ -168,7 +201,34 @@ func (c *Client) Models(ctx context.Context) ([]Model, error) {
 			(c.provider == "openrouter" && m.SupportedParameters != nil &&
 				!slices.Contains(m.SupportedParameters, "tools"))
 	})
-	slices.SortFunc(result.Data, func(a, b Model) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(result.Data, func(a, b Model) int {
+		if c.provider == "deepseek" {
+			preferred := []string{"deepseek-flash", "deepseek-v4-pro"}
+
+			aRank, bRank := slices.Index(preferred, a.ID), slices.Index(preferred, b.ID)
+			if aRank < 0 {
+				aRank = len(preferred)
+			}
+
+			if bRank < 0 {
+				bRank = len(preferred)
+			}
+
+			if aRank != bRank {
+				return aRank - bRank
+			}
+		}
+
+		if a.Created > b.Created {
+			return -1
+		}
+
+		if a.Created < b.Created {
+			return 1
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
 
 	if len(result.Data) == 0 {
 		return nil, errors.New("provider returned no available models")
@@ -184,53 +244,117 @@ func validModel(model string) bool {
 }
 
 func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
+	return c.complete(ctx, messages, tools, nil)
+}
+
+func (c *Client) complete(
+	ctx context.Context,
+	messages []Message,
+	tools []Tool,
+	emit func(Event),
+) (Message, error) {
 	if !validModel(c.model) {
 		return Message{}, errors.New("select a model before starting the agent")
 	}
 
-	payload := map[string]any{"model": c.model, "messages": messages, "stream": false, "max_tokens": 4096}
+	payload := map[string]any{
+		"model":      c.model,
+		"messages":   messages,
+		"stream":     emit != nil,
+		"max_tokens": c.options.OutputLimit(),
+	}
+	if emit != nil {
+		payload["stream_options"] = map[string]bool{"include_usage": true}
+	}
+
 	if len(tools) != 0 {
 		payload["tools"], payload["tool_choice"] = tools, "auto"
 	}
 
-	if c.provider == "deepseek" {
-		payload["thinking"] = map[string]string{"type": "disabled"}
+	if c.provider == "deepseek" && c.options.Reasoning != "" {
+		if c.options.Reasoning == "none" {
+			payload["thinking"] = map[string]string{"type": "disabled"}
+		} else {
+			payload["thinking"] = map[string]string{"type": "enabled"}
+			payload["reasoning_effort"] = c.options.Reasoning
+		}
+	}
+
+	if c.provider == "openrouter" {
+		payload["provider"] = map[string]bool{"require_parameters": true}
+		if c.options.Reasoning != "" {
+			payload["reasoning"] = map[string]string{"effort": c.options.Reasoning}
+		} else if c.options.ReasoningTokens > 0 {
+			payload["reasoning"] = map[string]int{"max_tokens": c.options.ReasoningTokens}
+		}
+	}
+
+	resp, err := c.response(ctx, http.MethodPost, "/chat/completions", payload)
+	if err != nil {
+		return Message{}, err
+	}
+	defer resp.Body.Close()
+
+	if emit != nil && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		return c.readCompletionStream(ctx, resp.Body, emit)
 	}
 
 	var response struct {
 		Error   json.RawMessage `json:"error"`
+		Usage   json.RawMessage `json:"usage"`
 		Choices []struct {
 			Message      Message `json:"message"`
 			FinishReason string  `json:"finish_reason"`
 		} `json:"choices"`
 	}
-	if err := c.request(ctx, http.MethodPost, "/chat/completions", payload, &response); err != nil {
-		return Message{}, err
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	if err != nil || len(data) > 8<<20 {
+		return Message{}, errors.New("provider response is incomplete or too large")
 	}
 
+	if json.Unmarshal(data, &response) != nil {
+		return Message{}, errors.New("invalid provider response")
+	}
+
+	var usage *Usage
+	if json.Unmarshal(response.Usage, &usage) != nil {
+		usage = nil
+	}
+
+	reported := Message{Usage: usage}
+
 	if len(response.Error) != 0 && string(response.Error) != "null" {
-		return Message{}, errors.New("provider could not complete this request")
+		return reported, errors.New("provider could not complete this request")
 	}
 
 	if len(response.Choices) == 0 || response.Choices[0].Message.Role != "assistant" {
-		return Message{}, errors.New("provider returned no assistant response")
+		return reported, errors.New("provider returned no assistant response")
 	}
 
 	choice := response.Choices[0]
+
+	choice.Message.Usage = usage
 	if choice.FinishReason == "length" {
-		return Message{}, errors.New("model output limit reached; narrow the request and retry")
+		return reported, errors.New(
+			"model output limit reached; increase the output limit or lower reasoning in /model",
+		)
 	}
 
 	if strings.TrimSpace(choice.Message.Content) == "" && len(choice.Message.ToolCalls) == 0 {
-		return Message{}, errors.New("provider returned an empty response")
+		return reported, errors.New("provider returned an empty response")
 	}
 
-	choice.Message.Content = strings.ReplaceAll(choice.Message.Content, c.key, "[API key redacted]")
-	for i := range choice.Message.ToolCalls {
-		call := &choice.Message.ToolCalls[i]
+	c.redactCompletion(&choice.Message)
+
+	return choice.Message, nil
+}
+
+func (c *Client) redactCompletion(message *Message) {
+	message.Content = strings.ReplaceAll(message.Content, c.key, "[API key redacted]")
+	for i := range message.ToolCalls {
+		call := &message.ToolCalls[i]
 		call.Function.Arguments = strings.ReplaceAll(call.Function.Arguments, c.key, "[API key redacted]")
 		call.Function.Name = strings.ReplaceAll(call.Function.Name, c.key, "[API key redacted]")
 	}
-
-	return choice.Message, nil
 }

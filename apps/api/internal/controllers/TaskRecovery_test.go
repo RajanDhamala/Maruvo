@@ -44,7 +44,7 @@ func (r *recoveryRPC) PrepareEscrow(
 	return &pb.PreparedEscrow{
 		Address:              fmt.Sprintf("recovery-fixture-%d", request.PostId),
 		ProgramId:            "program",
-		Reviewer:             "reviewer",
+		Reviewer:             request.Poster,
 		Network:              "localnet",
 		Transaction:          "plan",
 		LastValidBlockHeight: 100,

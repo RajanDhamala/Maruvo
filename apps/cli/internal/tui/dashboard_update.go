@@ -60,7 +60,7 @@ func (m model) updateDashboard(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.dashboard.focus = dashboardTasks
 		case "enter":
-			return m.createDashboardDraft(), nil
+			return m.sendDashboardPrompt()
 		default:
 			m.homeInput.limit = 2000
 			m.homeInput.key(msg)
@@ -242,6 +242,8 @@ func (m model) openDashboardTask(index int) (tea.Model, tea.Cmd) {
 
 func (m model) updateDashboardMouse(hit hitArea, x, y int) (tea.Model, tea.Cmd) {
 	switch hit.action {
+	case "dashboard-create":
+		return m.createDashboardDraft(), nil
 	case "dashboard-sidebar":
 		return m.updateDashboard(tea.KeyPressMsg{Code: 'b', Mod: tea.ModCtrl})
 	case "dashboard-scope":
@@ -254,7 +256,7 @@ func (m model) updateDashboardMouse(hit hitArea, x, y int) (tea.Model, tea.Cmd) 
 	case "dashboard-task":
 		return m.openDashboardTask(hit.index)
 	case "dashboard-submit":
-		return m.createDashboardDraft(), nil
+		return m.sendDashboardPrompt()
 	case "dashboard-search":
 		m.dashboard.focus = dashboardSearch
 		m.dashboard.search.cursor = len([]rune(m.dashboard.search.value))

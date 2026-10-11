@@ -23,7 +23,7 @@ func (a *arguments) Set(value string) error { *a = append(*a, value); return nil
 func Run(ctx context.Context, client *api.Client, profile string, args []string, out, log io.Writer) error {
 	if len(args) == 0 {
 		return InvalidArgument(
-			"agent commands: tools, login, link-github, identity, grant, grants, revoke, feed, tasks, create, task, accept, cancel, reopen, chat, message, files, send-file, upload, download, submit, request-changes, events, history, wait, run",
+			"agent commands: tools, login, link-github, identity, control, grant, grants, revoke, connect, connection, bridge, inbox, listen, activity, offer, offers, serve, feed, tasks, create, task, accept, cancel, reopen, chat, message, files, send-file, upload, download, submit, request-changes, events, history, wait, run",
 		)
 	}
 
@@ -33,9 +33,11 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		"login",
 		"link-github",
 		"identity",
+		"control",
 		"grant",
 		"grants",
 		"revoke",
+		"offer", "offers", "serve", "connect", "connection", "bridge", "inbox", "listen", "activity",
 		"feed",
 		"tasks",
 		"create",
@@ -72,6 +74,9 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	fileID := flags.String("id", "", "shared file ID")
 	grantID := flags.String("grant-id", "", "agent grant ID to revoke")
 	agentName := flags.String("name", "", "name identifying this harness")
+	controlMode := flags.String("mode", "", "task automation: manual or agent; omit to inspect")
+	activityState := flags.String("state", "", "reported remote activity state")
+	runID := flags.String("run-id", os.Getenv("MARUVO_RUN_ID"), "current runner lease ID")
 	lifetime := flags.Duration("expires-in", time.Hour, "agent credential lifetime (1 minute to 7 days)")
 
 	var permissions arguments
@@ -97,6 +102,12 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	flags.Var(&eventKinds, "event", "event kind to wait for (repeatable); defaults to any workspace event")
 	directory := flags.String("dir", "./maruvo-work", "local task working directory")
 	executable := flags.String("exec", "", "agent harness executable; receives task JSON on stdin")
+	prompt := flags.Bool(
+		"prompt",
+		false,
+		"translate task JSON into a prompt for a harness that reads prompts on stdin",
+	)
+	maxJobs := flags.Int("max-jobs", 1, "maximum jobs for a serving session (1-20)")
 
 	defaultTimeout := 30 * time.Minute
 	if action == "wait" {
@@ -152,6 +163,11 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 
 	encode := json.NewEncoder(out).Encode
 
+	if action == "control" && (*postID <= 0 ||
+		(*controlMode != "" && *controlMode != "manual" && *controlMode != "agent")) {
+		return InvalidArgument("provide a positive --post and optional --mode manual or agent")
+	}
+
 	if action == "history" && (*postID <= 0 || *before < 0 || *pageLimit < 1 || *pageLimit > 100) {
 		return InvalidArgument("provide --post, nonnegative --before, and --limit between 1 and 100")
 	}
@@ -175,6 +191,18 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 
 	if action == "tools" {
 		return encode(toolList())
+	}
+
+	if action == "bridge" {
+		if *executable == "" {
+			return InvalidArgument("provide --exec for the prompt harness")
+		}
+
+		if err := bridgeHarness(ctx, *executable, commandArgs, os.Stdin, log); err != nil {
+			return err
+		}
+
+		return encode(map[string]string{"status": "handled"})
 	}
 
 	if action == "login" {
@@ -223,6 +251,14 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 		return err
 	}
 
+	if agentSession && (action == "offer" || action == "offers" || action == "serve" || action == "connect" ||
+		action == "connection" || action == "inbox" || action == "listen" || action == "control") {
+		return &commandError{
+			Code:    "FORBIDDEN",
+			Message: "seller discovery and serving require the owner's login",
+		}
+	}
+
 	if action == "link-github" {
 		linked, err := auth.LinkGitHub(ctx, client, token)
 		if err != nil {
@@ -237,6 +273,144 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	}
 
 	switch action {
+	case "control":
+		var control api.AgentControl
+		if *controlMode == "" {
+			control, err = client.AgentControl(ctx, token, *postID)
+		} else {
+			control, err = client.SetAgentControl(ctx, token, *postID, *controlMode)
+		}
+
+		if err != nil {
+			return err
+		}
+
+		return encode(control)
+	case "connect":
+		if *executable == "" {
+			return InvalidArgument(
+				"provide --exec with your harness; --file optionally publishes seller terms",
+			)
+		}
+
+		return connectHarness(
+			ctx,
+			client,
+			token,
+			profile,
+			user.ID,
+			*file,
+			*directory,
+			*executable,
+			commandArgs,
+			*prompt,
+			out,
+		)
+	case "connection":
+		connection, err := loadConnection(client.URL(), profile, user.ID)
+		if err != nil {
+			return err
+		}
+
+		return encode(map[string]any{"executable": connection.Executable, "directory": connection.Directory,
+			"argument_count": len(connection.Arguments), "status": "configured"})
+	case "inbox":
+		posts, err := client.RemoteInbox(ctx, token)
+		if err != nil {
+			return err
+		}
+
+		return encode(posts)
+	case "listen", "serve":
+		if *executable == "" {
+			connection, err := loadConnection(client.URL(), profile, user.ID)
+			if err != nil {
+				return err
+			}
+
+			*executable, commandArgs, *prompt = connection.Executable, connection.Arguments, connection.Prompt
+			explicitDir := false
+
+			flags.Visit(func(f *flag.Flag) {
+				if f.Name == "dir" {
+					explicitDir = true
+				}
+			})
+
+			if !explicitDir {
+				*directory = connection.Directory
+			}
+		}
+
+		if *prompt {
+			*executable, commandArgs, err = promptBridge(*executable, commandArgs)
+			if err != nil {
+				return err
+			}
+		}
+
+		if *timeout <= 0 {
+			return InvalidArgument("provide a positive --timeout")
+		}
+
+		sessionCtx, stop := context.WithTimeout(ctx, *timeout)
+		defer stop()
+
+		if action == "listen" {
+			return listenInbox(
+				sessionCtx,
+				client,
+				token,
+				profile,
+				user.ID,
+				*directory,
+				*executable,
+				commandArgs,
+				*once,
+				out,
+				log,
+			)
+		}
+
+		return serveAgent(
+			sessionCtx,
+			client,
+			token,
+			profile,
+			user,
+			*directory,
+			*executable,
+			commandArgs,
+			*maxJobs,
+			*once,
+			out,
+			log,
+		)
+	case "offer":
+		var offer api.AgentOffer
+		if *file == "" {
+			offer, err = client.OwnAgentOffer(ctx, token)
+		} else {
+			terms, loadErr := loadOffer(*file)
+			if loadErr != nil {
+				return loadErr
+			}
+
+			offer, err = client.SaveAgentOffer(ctx, token, terms)
+		}
+
+		if err != nil {
+			return err
+		}
+
+		return encode(offer)
+	case "offers":
+		offers, err := client.AgentOffers(ctx, token)
+		if err != nil {
+			return err
+		}
+
+		return encode(offers)
 	case "history":
 		page, err := client.History(ctx, token, *postID, *before, *pageLimit)
 		if err != nil {
@@ -314,6 +488,16 @@ func Run(ctx context.Context, client *api.Client, profile string, args []string,
 	}
 
 	switch action {
+	case "activity":
+		if len(*runID) < 32 {
+			return InvalidArgument("activity requires the current --run-id or MARUVO_RUN_ID")
+		}
+
+		if err := client.ReportActivity(ctx, token, *postID, *runID, *activityState, *text); err != nil {
+			return err
+		}
+
+		return encode(map[string]string{"status": "reported"})
 	case "task":
 		info, err := client.PostInfo(ctx, token, *postID)
 		if err != nil {

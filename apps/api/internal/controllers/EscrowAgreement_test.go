@@ -78,3 +78,15 @@ func TestSettlementEligibility(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessProtectedSettlementEligibility(t *testing.T) {
+	for _, state := range []string{"working", "submitted", "changes_requested"} {
+		ws := db.PostWorkspace{ReviewState: state, SubmissionVersion: 1, RefundBlocked: true}
+		if canSettle(ws, "refund", 1) {
+			t.Fatalf("download allowed a unilateral refund from %s", state)
+		}
+		if canSettle(ws, "release", 1) != (state == "submitted") {
+			t.Fatal("download changed payout eligibility")
+		}
+	}
+}

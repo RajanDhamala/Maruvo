@@ -56,7 +56,7 @@ func (m model) dashboardGeometry() dashboardGeometry {
 }
 
 func (m model) onDashboard() bool {
-	return m.screen == feedScreen || m.screen == myPostsScreen
+	return !m.board.open && (m.screen == feedScreen || m.screen == myPostsScreen)
 }
 
 func (m model) dashboardView() tea.View {
@@ -150,8 +150,8 @@ func (m model) dashboardLayout() postLayout {
 	l.rows[g.statusY] = ansi.Truncate(status, g.mainWidth, "…")
 	if g.promptY >= 0 {
 		active := m.dashboard.focus == dashboardPrompt && !m.loading && !m.profileOpen
-		submit := button(" Enter create ", active)
-		rows := homePromptRows(m.homeInput, g.mainWidth, active, "Task", submit)
+		submit := button(" Enter send ", active)
+		rows := homePromptRows(m.homeInput, g.mainWidth, active, "Agent chat", submit)
 		drawOverlay(width, l.rows, hitArea{y: g.promptY, width: g.mainWidth}, rows)
 		l.hit(
 			g.mainWidth-ansi.StringWidth(submit)-1,
@@ -164,37 +164,10 @@ func (m model) dashboardLayout() postLayout {
 		l.hit(0, g.promptY, g.mainWidth, homePromptHeight, "dashboard-prompt", 0)
 	}
 
-	help := "↑↓ browse · Enter open · / commands · Ctrl+f search · Tab prompt"
-	controls := "n new · 1/2 view · r refresh · Ctrl+b sidebar · Ctrl+t prompt"
+	help := m.dashboardShortcuts()
 
-	if g.mainWidth < 76 {
-		help = "↑↓ · Enter · / commands · Ctrl+f search"
-		controls = "1/2 view · Ctrl+b panel · Ctrl+t input"
-	}
+	l.rows[height-3] = muted(compactHint(help, g.mainWidth))
 
-	if m.dashboard.focus == dashboardPrompt {
-		help = "Describe a task · Enter create · Esc browse · Ctrl+c quit"
-		if g.mainWidth < 76 {
-			help = "Enter create · Esc browse · Ctrl+c quit"
-		}
-	} else if m.dashboard.focus == dashboardSearch {
-		help = "Search title, person, or status · Enter browse · Esc back"
-		if g.mainWidth < 76 {
-			help = "Enter browse · Esc back · Ctrl+u clear"
-		}
-	}
-
-	if m.profileOpen {
-		help = "w wallet · Enter log out · Esc close"
-	} else if m.dashboard.filterOpen {
-		help = "↑↓ choose · Enter apply · Esc close"
-	} else if m.dashboard.focus == dashboardTasks && len(m.listIndices()) == 0 && !m.loading {
-		help = "Enter · / commands · Ctrl+f search · Tab prompt"
-	}
-
-	l.rows[height-3] = muted(ansi.Truncate(help, g.mainWidth, "…"))
-
-	l.rows[height-2] = muted(ansi.Truncate(controls, g.mainWidth, "…"))
 	if g.sideWidth > 0 {
 		m.dashboardSidebar(&l, g.sideX, g.sideWidth, height)
 	} else {
@@ -203,11 +176,7 @@ func (m model) dashboardLayout() postLayout {
 			path = currentHomePath()
 		}
 
-		l.rows[height-1] = align(
-			muted(ansi.Truncate(plain(path), max(1, width-23), "…")),
-			muted("Ctrl+p account"),
-			width,
-		)
+		l.rows[height-1] = muted(ansi.Truncate(plain(path), width, "…"))
 	}
 
 	if m.dashboard.filterOpen && !m.profileOpen {
@@ -224,6 +193,11 @@ func (m model) dashboardList(l *postLayout, width, height int) {
 		" ",
 		max(2, width-ansi.StringWidth(title)-ansi.StringWidth(right)),
 	) + right
+	if height >= 6 || (m.dashboard.focus != dashboardSearch && m.dashboard.search.value == "") {
+		create := button(" + Create task ", false)
+		l.rows[1] = create
+		l.hit(0, 1, ansi.StringWidth(create), 1, "dashboard-create", 0)
+	}
 	y := 2
 
 	if m.dashboard.focus == dashboardSearch || m.dashboard.search.value != "" {
@@ -450,4 +424,25 @@ func taskAge(updated time.Time) string {
 	}
 
 	return updated.Local().Format("02 Jan")
+}
+
+func (m model) dashboardShortcuts() string {
+	if m.profileOpen {
+		return "w wallet · Enter log out · Esc close"
+	}
+
+	if m.dashboard.filterOpen {
+		return "↑↓ choose · Enter apply · Esc close"
+	}
+
+	shared := "Tab / Shift+Tab tasks / prompt · Ctrl+f search · Ctrl+b sidebar · Ctrl+t show / hide prompt"
+	if m.dashboard.focus == dashboardPrompt {
+		return "Enter send · Esc browse · / commands when empty · " + shared
+	}
+
+	if m.dashboard.focus == dashboardSearch {
+		return "Enter browse · Esc back · Ctrl+u clear · " + shared
+	}
+
+	return "↑↓ browse · Enter open · / commands · n new · 1/2 view · r refresh · " + shared
 }

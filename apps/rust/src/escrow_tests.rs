@@ -184,6 +184,113 @@ async fn recovery_waits_for_finalized_expiry_and_reads_a_newer_account_snapshot(
 }
 
 #[tokio::test]
+async fn new_funding_assigns_review_to_the_requester() {
+    let legacy = Pubkey::new_unique();
+    let request = request_fixture(legacy).agreement.unwrap();
+    let poster = key(&request.poster).unwrap();
+    let (client, server) = rpc_fixture(legacy, vec![
+        ("getGenesisHash", json!("fixture")),
+        ("getAccountInfo", json!({"value":{"executable":true}})),
+        ("getLatestBlockhash", json!({"value":{"blockhash":Hash::new_from_array([5; 32]).to_string(),"lastValidBlockHeight":200}})),
+        ("getFeeForMessage", json!({"value":5000})),
+        ("getMinimumBalanceForRentExemption", json!(10)),
+    ]).await;
+    let plan = client.prepare(request).await.unwrap();
+    assert_eq!(plan.reviewer, poster.to_string());
+    let transaction = decode_transaction(&plan.transaction).unwrap();
+    assert_eq!(transaction.message.account_keys[0], poster);
+    assert_eq!(
+        &transaction.message.instructions[0].data[56..88],
+        poster.as_ref()
+    );
+    server.await.unwrap();
+}
+
+fn account_snapshot(request: &CheckEscrowRequest, reviewer: Pubkey) -> Value {
+    let agreement = request.agreement.as_ref().unwrap();
+    let escrow = Escrow {
+        post_id: agreement.post_id,
+        poster: key(&agreement.poster).unwrap(),
+        worker: key(&agreement.worker).unwrap(),
+        reviewer,
+        amount: agreement.lamports,
+        agreement_hash: [1; 32],
+        state: 0,
+        bump: 0,
+    };
+    let mut bytes = Vec::new();
+    escrow.try_serialize(&mut bytes).unwrap();
+    json!({"value":{"owner":maruvo_escrow::ID.to_string(),"lamports":110,"data":[STANDARD.encode(bytes),"base64"]}})
+}
+
+#[tokio::test]
+async fn settlement_uses_the_escrows_requester_or_legacy_reviewer() {
+    for requester_review in [true, false] {
+        for action in ["release", "refund"] {
+            let legacy = Pubkey::new_unique();
+            let mut request = request_fixture(legacy);
+            let poster = key(&request.agreement.as_ref().unwrap().poster).unwrap();
+            let reviewer = if requester_review { poster } else { legacy };
+            request.reviewer = reviewer.to_string();
+            let (client, server) = rpc_fixture(legacy, vec![
+                ("getAccountInfo", account_snapshot(&request, reviewer)),
+                ("getMinimumBalanceForRentExemption", json!(10)),
+                ("getGenesisHash", json!("fixture")),
+                ("getAccountInfo", json!({"value":{"executable":true}})),
+                ("getLatestBlockhash", json!({"value":{"blockhash":Hash::new_from_array([5; 32]).to_string(),"lastValidBlockHeight":200}})),
+                ("getFeeForMessage", json!({"value":5000})),
+            ]).await;
+            let expected_address = key(&request.address).unwrap();
+            let expected_worker = key(&request.agreement.as_ref().unwrap().worker).unwrap();
+            let plan = client
+                .prepare_settlement(PrepareSettlementRequest {
+                    escrow: Some(request),
+                    action: action.into(),
+                })
+                .await
+                .unwrap();
+            let transaction = decode_transaction(&plan.transaction).unwrap();
+            let message = &transaction.message;
+            assert_eq!(message.header.num_required_signatures, 1);
+            assert_eq!(message.account_keys[0], reviewer);
+            let instruction = &message.instructions[0];
+            for (index, expected) in [reviewer, expected_address, poster, expected_worker]
+                .iter()
+                .enumerate()
+            {
+                assert_eq!(
+                    message.account_keys[instruction.accounts[index] as usize],
+                    *expected
+                );
+            }
+            assert_eq!(
+                instruction.data,
+                if action == "release" {
+                    instruction::Release {}.data()
+                } else {
+                    instruction::Refund {}.data()
+                }
+            );
+            server.await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn requester_cannot_replace_a_funded_legacy_reviewer() {
+    let legacy = Pubkey::new_unique();
+    let mut request = request_fixture(legacy);
+    let snapshot = account_snapshot(&request, legacy);
+    request.reviewer = request.agreement.as_ref().unwrap().poster.clone();
+    let (client, server) = rpc_fixture(legacy, vec![("getAccountInfo", snapshot)]).await;
+    assert_eq!(
+        client.check(request).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn recovery_rejects_stale_or_missing_account_snapshots() {
     for snapshot in [
         json!({"context":{"slot":149},"value":null}),

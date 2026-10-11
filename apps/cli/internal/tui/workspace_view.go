@@ -13,8 +13,32 @@ import (
 )
 
 type conversationRow struct {
-	text      string
-	fileIndex int
+	text                     string
+	fileIndex                int
+	activity                 bool
+	activityTool             bool
+	activityIndex            int
+	activityX, activityWidth int
+}
+
+func (m model) workspacePeerLabel() string {
+	p := m.workspace.Post
+	label, online := "Requester", false
+	if m.isPoster(p) {
+		label = "Worker"
+	}
+	if m.presence == nil || m.live != "Live" {
+		return label + " · presence unavailable"
+	}
+	if m.isPoster(p) {
+		online = m.presence.WorkerOnline
+	} else {
+		online = m.presence.RequesterOnline
+	}
+	if online {
+		return label + " · online in workspace"
+	}
+	return label + " · away from workspace"
 }
 
 func fileSize(size int64) string {
@@ -50,8 +74,15 @@ func chatText(text string) string {
 func (m model) conversationRows(width int) []conversationRow {
 	var rows []conversationRow
 
-	for _, event := range m.workspace.Events {
+	for i := 0; i < len(m.workspace.Events); i++ {
+		event := m.workspace.Events[i]
 		switch event.Kind {
+		case "agent.activity":
+			start := i
+			for i+1 < len(m.workspace.Events) && sameActivityActor(event, m.workspace.Events[i+1]) {
+				i++
+			}
+			rows = append(rows, m.activityRows(start, i+1, width)...)
 		case "message", "file.shared":
 			actor := "System"
 			if event.ActorID != nil {
@@ -68,9 +99,14 @@ func (m model) conversationRows(width int) []conversationRow {
 			var data struct {
 				ID, Name, Text string
 				Size           int64
+				AgentName      string `json:"agent_name"`
 			}
 
 			_ = json.Unmarshal(event.Data, &data)
+			if data.AgentName != "" {
+				actor += " · agent " + plain(data.AgentName)
+			}
+
 			label := bold(actor) + "  " + muted(event.CreatedAt.Local().Format("15:04"))
 			rows = append(rows, conversationRow{text: label, fileIndex: -1})
 
@@ -111,19 +147,89 @@ func (m model) conversationRows(width int) []conversationRow {
 func (m model) chatLayout() postLayout {
 	width, bodyHeight := m.contentWidth(), m.bodyHeight()
 	post := m.workspace.Post
-	l := postLayout{footer: "Enter send · @ attach · Ctrl+F files · Ctrl+R review · Esc task"}
-	l.rows = []string{align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))), accent(m.live), width)}
-	links := fmt.Sprintf("Files %d   Review   Task", len(m.workspace.Files))
-	status := "Escrow " + m.workspace.Escrow.State + " · " + strings.ReplaceAll(
-		m.workspace.State.ReviewState,
-		"_",
-		" ",
-	)
+	l := postLayout{
+		footer: "Enter send · Alt+a activity · / commands · @ attach · Ctrl+F files · Ctrl+R review · Ctrl+T controls · Esc task",
+	}
 
-	l.rows = append(l.rows, align(muted(status), muted(links), width))
-	if m.workspace.Post.Deadline.DueAt != nil && !time.Now().Before(*m.workspace.Post.Deadline.DueAt) {
-		l.rows[0] = align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))),
-			warning(deadlineLabel(m.workspace.Post.Deadline)), width)
+	headerStatus := accent(m.live)
+	if m.live == "Live" {
+		headerStatus = accent("Connected")
+	}
+
+	if m.workspace.Escrow.Network == "devnet" {
+		headerStatus = accent("Devnet · test SOL") + " · " + headerStatus
+	}
+	l.rows = []string{align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))), headerStatus, width)}
+	links := fmt.Sprintf("Files %d   Review   Task", len(m.workspace.Files))
+	flow := m.workspaceFlow()
+	if post.Deadline.DueAt != nil && !time.Now().Before(*post.Deadline.DueAt) {
+		flow.stage += " · overdue"
+	}
+
+	l.rows = append(l.rows, align(accent(flow.stage), muted(links), width))
+	if bodyHeight >= 8 {
+		label, button, action := "Your agent is stopped", "Start my agent", "workspace-agent"
+		if !m.hasConnectedAgent() {
+			label, button, action = "Your agent is not connected", "Connect agent", "workspace-connect-agent"
+		}
+		if m.workAgent.postID == post.ID && m.workAgent.status != "" {
+			label = m.workAgent.status
+		}
+		if m.workSetup.armed && !m.workAgent.active {
+			label, button, action = "Invitation sent · waiting for acceptance", "Cancel invitation", "workspace-agent"
+		}
+		if m.workAgent.active {
+			label, button, action = "Your agent: "+m.workAgent.status, "Stop agent", "workspace-agent"
+		}
+		if m.hasConnectedAgent() && !m.workAgent.active && !m.workSetup.armed {
+			invite := "Invite both agents"
+			l.hit(width-len(invite), len(l.rows), len(invite), 1, "workspace-invite", 0)
+			l.hit(width-len(invite)-3-len(button), len(l.rows), len(button), 1, action, 0)
+			button += "   " + invite
+		} else {
+			l.hit(max(0, width-len(button)), len(l.rows), len(button), 1, action, 0)
+		}
+		if m.workAgent.active && m.workAgent.paused {
+			resume := "Continue agent"
+			l.hit(max(0, width-len(button)-3-len(resume)), len(l.rows), len(resume), 1, "workspace-continue", 0)
+			button = resume + "   " + button
+		}
+		left := ansi.Truncate(muted(label), max(0, width-len(button)-2), "…")
+		l.rows = append(l.rows, left+strings.Repeat(" ", max(0, width-ansi.StringWidth(left)-len(button)))+accent(button))
+	}
+
+	if bodyHeight >= 10 {
+		controlLabel := m.workspacePeerLabel()
+		if m.workspace.AgentControl.Mode == "manual" {
+			controlLabel += " · agent actions paused"
+		}
+
+		l.hit(width-6, len(l.rows), 6, 1, "workspace-control", 0)
+		l.rows = append(l.rows, align(muted(controlLabel), accent("Agents"), width))
+	}
+
+	if bodyHeight < 10 {
+		l.rows[0] = align(bold(fmt.Sprintf("#%d  %s", post.ID, plain(post.Title))), muted(m.workspacePeerLabel()), width)
+	}
+	if bodyHeight >= 12 && m.workSetup.postID == post.ID && m.workSetup.peerStatus != "" {
+		role, detail := "Requester", m.workSetup.peerDetail
+		if m.isPoster(post) {
+			role = "Worker"
+			if m.workSetup.peerStatus == "working" && post.Remote.Detail != "" {
+				detail = post.Remote.Detail
+			}
+		}
+		l.rows = append(l.rows, muted(role+" agent: "+strings.ReplaceAll(m.workSetup.peerStatus, "_", " ")+" · "+plain(detail)))
+	}
+	if bodyHeight >= 12 && m.workSetup.peerStatus == "" && (post.Remote.AgentName != "" || post.Remote.Status == "working" || post.Remote.Status == "interrupted" || post.Remote.Status == "failed") {
+		label := "Worker agent: " + strings.ReplaceAll(post.Remote.Status, "_", " ")
+		if post.Remote.AgentName != "" {
+			label += " · " + plain(post.Remote.AgentName)
+		}
+		if post.Remote.Detail != "" {
+			label += " · " + plain(post.Remote.Detail)
+		}
+		l.rows = append(l.rows, muted(label))
 	}
 
 	x := width - ansi.StringWidth(links)
@@ -132,6 +238,13 @@ func (m model) chatLayout() postLayout {
 	l.hit(width-4, 1, 4, 1, "b", 0)
 
 	composer := m.composerRows(width)
+	guidance := flowRows(flow, width)[1:]
+	if bodyHeight-len(l.rows)-len(composer) >= len(guidance)+2 {
+		l.rows = append(l.rows, guidance...)
+	}
+	if flow.label != "" && bodyHeight-len(l.rows)-len(composer) >= 1 {
+		l.wrappedButtons(width, []string{flow.label}, []string{flow.action})
+	}
 
 	var (
 		suggestions       []string
@@ -139,12 +252,16 @@ func (m model) chatLayout() postLayout {
 	)
 
 	if m.composer.completing {
-		suggestions = append(
-			suggestions,
-			muted("Attach a local file · "+plain(filepath.Base(m.composer.root))),
-		)
-		suggestionIndexes = append(suggestionIndexes, -1)
-		available := max(1, min(5, bodyHeight-len(l.rows)-len(composer)-1))
+		space := bodyHeight - len(l.rows) - len(composer)
+		if space > 1 {
+			suggestions = append(
+				suggestions,
+				muted("Attach a local file · "+plain(filepath.Base(m.composer.root))),
+			)
+			suggestionIndexes = append(suggestionIndexes, -1)
+		}
+
+		available := max(0, min(5, space-len(suggestions)))
 
 		start := max(0, m.composer.selection-available+1)
 		for i := start; i < min(len(m.composer.suggestions), start+available); i++ {
@@ -164,7 +281,7 @@ func (m model) chatLayout() postLayout {
 			suggestionIndexes = append(suggestionIndexes, i)
 		}
 
-		if len(m.composer.suggestions) == 0 {
+		if len(m.composer.suggestions) == 0 && available > 0 {
 			label := "No matching files. Try a filename or @/absolute/path."
 			if m.composer.fileError != "" {
 				label = m.composer.fileError
@@ -187,6 +304,13 @@ func (m model) chatLayout() postLayout {
 
 	end := len(activity) - offset
 	for _, row := range activity[max(0, end-visible):end] {
+		if row.activity {
+			if row.activityTool {
+				l.hit(row.activityX, len(l.rows), row.activityWidth, 1, "workspace-tool", row.activityIndex)
+			} else {
+				l.hit(2, len(l.rows), ansi.StringWidth(row.text)-2, 1, "workspace-activity", row.activityIndex)
+			}
+		}
 		if row.fileIndex >= 0 {
 			l.hit(max(0, width-12), len(l.rows), 12, 1, "workspace-download", row.fileIndex)
 		}
@@ -195,7 +319,12 @@ func (m model) chatLayout() postLayout {
 	}
 
 	if len(activity) == 0 && visible > 0 {
-		l.rows = append(l.rows, muted("Start the conversation. Type a message or attach a file with @."))
+		label := "Messages and shared files appear here."
+		if m.presence != nil && m.live == "Live" &&
+			((m.isPoster(post) && !m.presence.WorkerOnline) || (!m.isPoster(post) && !m.presence.RequesterOnline)) {
+			label = "They are away. Leave a message; it stays in this workspace."
+		}
+		l.rows = append(l.rows, muted(ansi.Truncate(label, width, "…")))
 	}
 
 	for len(l.rows) < bodyHeight-len(composer)-len(suggestions) {
@@ -221,6 +350,11 @@ func (m model) chatLayout() postLayout {
 	}
 
 	l.rows = append(l.rows, composer...)
+	sendWidth := ansi.StringWidth(" Enter send ")
+	l.hit(width-sendWidth-2, len(l.rows)-2, sendWidth, 1, "workspace-chat-send", 0)
+	if bodyHeight < 12 {
+		l.hits[len(l.hits)-1].y = len(l.rows) - 1
+	}
 
 	return l
 }

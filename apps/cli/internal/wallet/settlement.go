@@ -2,11 +2,9 @@ package wallet
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"os"
 
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
 )
@@ -19,8 +17,11 @@ func (w *Wallet) SignSettlement(post api.Post, plan api.SettlementPlan) (string,
 
 	if post.AcceptedBy == nil || escrow.ProgramID != ProgramID || escrow.State != "confirmed" ||
 		(escrow.Network != "devnet" && escrow.Network != "localnet") || settlement.State != "prepared" ||
-		(settlement.Action != "release" && settlement.Action != "refund") || w.Address() != escrow.Reviewer || os.Getenv("SOLANA_REVIEWER") != escrow.Reviewer {
+		(settlement.Action != "release" && settlement.Action != "refund") || w.Address() != escrow.Reviewer {
 		return "", errors.New("reviewer wallet, network, or program does not match this settlement")
+	}
+	if err := validateReviewer(escrow.Reviewer, post.PosterWallet); err != nil {
+		return "", err
 	}
 
 	data, err := base64.StdEncoding.DecodeString(settlement.Transaction)
@@ -70,7 +71,5 @@ func (w *Wallet) SignSettlement(post api.Post, plan api.SettlementPlan) (string,
 		return "", errors.New("settlement action changed")
 	}
 
-	copy(data[1:65], ed25519.Sign(w.key, message))
-
-	return base64.StdEncoding.EncodeToString(data), nil
+	return w.signTransaction(data)
 }

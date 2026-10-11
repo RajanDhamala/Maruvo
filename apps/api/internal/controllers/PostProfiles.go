@@ -21,6 +21,7 @@ type publicPost struct {
 	Poster   *publicUser  `json:"poster"`
 	Worker   *publicUser  `json:"worker"`
 	Deadline taskDeadline `json:"deadline"`
+	Remote   remoteView   `json:"remote"`
 }
 
 func (ctrl *Controller) postProfiles(ctx context.Context, posts []db.Post) ([]publicPost, error) {
@@ -44,8 +45,18 @@ func (ctrl *Controller) postProfiles(ctx context.Context, posts []db.Post) ([]pu
 	}
 
 	deadlines := map[int64]taskDeadline{}
+	remote := map[int64]db.RemoteSnapshotsRow{}
 
 	if len(postIDs) > 0 {
+		remoteSnapshots, err := ctrl.queries.RemoteSnapshots(ctx, postIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, snapshot := range remoteSnapshots {
+			remote[snapshot.ID] = snapshot
+		}
+
 		snapshots, err := ctrl.queries.TaskDeadlineSnapshots(ctx, postIDs)
 		if err != nil {
 			return nil, err
@@ -77,6 +88,7 @@ func (ctrl *Controller) postProfiles(ctx context.Context, posts []db.Post) ([]pu
 				Poster:   profiles[post.UserID],
 				Worker:   profiles[post.AcceptedBy.Int64],
 				Deadline: deadlines[post.ID],
+				Remote:   remoteStatus(post, remote[post.ID], time.Now()),
 			},
 		)
 	}

@@ -3,7 +3,6 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
-	"github.com/rajandhamala/Maruvo/cli/internal/wallet"
 )
 
 type postChanged struct {
@@ -18,12 +17,8 @@ type postChanged struct {
 
 func (m model) createPost(payload api.CreatePostPayload) tea.Cmd {
 	return func() tea.Msg {
-		key, err := wallet.Load()
+		key, err := m.loadWallet(m.ctx)
 		if err != nil {
-			return postChanged{err: err}
-		}
-
-		if err = m.linkWallet(key); err != nil {
 			return postChanged{err: err}
 		}
 

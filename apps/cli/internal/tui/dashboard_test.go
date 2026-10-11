@@ -129,7 +129,7 @@ func TestDashboardResponsiveLayout(t *testing.T) {
 			}
 
 			if state != "profile" &&
-				((!m.dashboard.promptHidden && !strings.Contains(view.Content, "Enter create")) ||
+				((!m.dashboard.promptHidden && !strings.Contains(view.Content, "Enter send")) ||
 					!strings.Contains(view.Content, m.homePath)) {
 				t.Fatalf("%v %s: prompt action or path missing", size, state)
 			}
@@ -148,7 +148,7 @@ func TestDashboardResponsiveLayout(t *testing.T) {
 				}
 			}
 
-			if m.dashboard.promptHidden && strings.Contains(view.Content, "Enter create") {
+			if m.dashboard.promptHidden && strings.Contains(view.Content, "Enter send") {
 				t.Fatalf("%v %s: hidden prompt still rendered", size, state)
 			}
 
@@ -273,10 +273,9 @@ func TestDashboardPromptDraftAndShortcuts(t *testing.T) {
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	m = next.(model)
-	if cmd != nil || m.screen != newPostScreen || m.form.fields[3].value != strings.TrimSpace(draft) ||
-		m.form.descriptionSource != descriptionFromText || m.form.fields[0].value == "" ||
-		m.homeInput.value != draft {
-		t.Fatal("Enter must prepare a task draft and retain the prompt without publishing")
+	if cmd == nil || !m.onDashboard() || !m.localAgent.open || !m.localAgent.autoSend ||
+		m.localAgent.input.value != draft || m.homeInput.value != draft {
+		t.Fatal("Enter must queue the prompt for the agent and retain it while the model loads")
 	}
 
 	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -349,8 +348,9 @@ func TestDashboardSecondaryActions(t *testing.T) {
 					t.Fatal("prompt padding must accept focus without submitting")
 				}
 			case "dashboard-submit":
-				if cmd != nil || m.screen != newPostScreen || m.form.fields[3].value != "Dashboard task" {
-					t.Fatal("prompt button must prepare the typed task")
+				if cmd == nil || !m.localAgent.open || !m.localAgent.autoSend ||
+					m.localAgent.input.value != "Dashboard task" || !m.onDashboard() {
+					t.Fatal("prompt button must send the typed request to the agent")
 				}
 			}
 
@@ -453,8 +453,15 @@ func TestDashboardFetchesRealTaskSources(t *testing.T) {
 func TestDashboardUnauthorizedClearsAccountData(t *testing.T) {
 	m := dashboardFixture()
 	m.walletAddress = "linked-wallet"
-	next, _ := m.Update(dashboardResult{generation: 3,
+	next, cmd := m.Update(dashboardResult{generation: 3,
 		err: &api.Error{StatusCode: http.StatusUnauthorized, Message: "expired"}})
+
+	m = next.(model)
+	if cmd == nil || m.token == "" {
+		t.Fatal("task errors must recheck the current session before clearing it")
+	}
+
+	next, _ = m.Update(sessionChecked{token: m.token, err: &api.Error{StatusCode: http.StatusUnauthorized}})
 
 	m = next.(model)
 	if m.token != "" || m.walletAddress != "" || len(m.posts) != 0 || len(m.dashboard.mine) != 0 {
@@ -466,6 +473,7 @@ func TestDashboardMouseBoundaries(t *testing.T) {
 	for _, size := range [][2]int{{48, 16}, {80, 24}, {168, 44}} {
 		m := dashboardFixture()
 		m.width, m.height = size[0], size[1]
+		m.homeInput = textField{value: "hello are u here?", cursor: 17, limit: 2000}
 		m.user.GitHubLogin = strings.Repeat("developer", 20)
 		area := m.profileArea()
 
@@ -477,10 +485,10 @@ func TestDashboardMouseBoundaries(t *testing.T) {
 		for _, hit := range m.dashboardLayout().hits {
 			if hit.action == "dashboard-submit" {
 				for x := hit.x; x < hit.x+hit.width; x++ {
-					next, _ = m.updateMouse(tea.MouseClickMsg{X: m.contentX() + x,
+					next, cmd := m.updateMouse(tea.MouseClickMsg{X: m.contentX() + x,
 						Y: m.bodyStart() + hit.y, Button: tea.MouseLeft})
-					if next.(model).screen != newPostScreen {
-						t.Fatal("every cell of Enter create must open the task form")
+					if cmd == nil || !next.(model).localAgent.open || !next.(model).onDashboard() {
+						t.Fatal("every cell of Enter send must open the agent with the prompt")
 					}
 				}
 			}

@@ -119,6 +119,26 @@ func TestSignFundingVersions(t *testing.T) {
 	}
 }
 
+func TestRequesterReviewsNewFunding(t *testing.T) {
+	for _, legacy := range []string{"", testWallet(3).Address()} {
+		t.Run(legacy, func(t *testing.T) {
+			key, post, plan := fundingFixture(t, 3)
+			raw, err := base64.StdEncoding.DecodeString(plan.Transaction)
+			if err != nil {
+				t.Fatal(err)
+			}
+			offset := 65 + 4 + 128 + 32 + 7 + 56
+			copy(raw[offset:offset+32], key.key[32:])
+			plan.Transaction = base64.StdEncoding.EncodeToString(raw)
+			plan.Reviewer = post.PosterWallet
+			t.Setenv("SOLANA_REVIEWER", legacy)
+			if _, err := key.SignFunding(post, plan); err != nil {
+				t.Fatalf("requester-reviewed funding rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestSignFundingBindsFullBrief(t *testing.T) {
 	for name, mutate := range map[string]func(*api.Post, *api.Escrow){
 		"instructions":      func(p *api.Post, _ *api.Escrow) { p.Description += " changed" },

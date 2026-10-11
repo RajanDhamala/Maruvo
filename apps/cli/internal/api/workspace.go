@@ -40,6 +40,7 @@ type WorkspaceFile struct {
 }
 
 type WorkspaceState struct {
+	RefundBlocked     bool       `json:"refund_blocked"`
 	DeliveryFiles     []string   `json:"delivery_files"`
 	PostID            int64      `json:"post_id"`
 	LastEventID       int64      `json:"last_event_id"`
@@ -52,15 +53,17 @@ type WorkspaceState struct {
 }
 
 type Workspace struct {
-	Context    TaskContext      `json:"context"`
-	Cursor     string           `json:"cursor"`
-	Post       Post             `json:"post"`
-	Escrow     Escrow           `json:"escrow"`
-	State      WorkspaceState   `json:"workspace"`
-	Files      []WorkspaceFile  `json:"files"`
-	Events     []WorkspaceEvent `json:"events"`
-	CanReview  bool             `json:"can_review"`
-	Settlement Settlement       `json:"settlement"`
+	AgentControl    AgentControl     `json:"agent_control"`
+	HistoryRequired bool             `json:"history_required,omitempty"`
+	Context         TaskContext      `json:"context"`
+	Cursor          string           `json:"cursor"`
+	Post            Post             `json:"post"`
+	Escrow          Escrow           `json:"escrow"`
+	State           WorkspaceState   `json:"workspace"`
+	Files           []WorkspaceFile  `json:"files"`
+	Events          []WorkspaceEvent `json:"events"`
+	CanReview       bool             `json:"can_review"`
+	Settlement      Settlement       `json:"settlement"`
 }
 
 type MessageReceipt struct {
@@ -224,7 +227,11 @@ func (c *Client) ConnectWorkspace(
 	id, after int64,
 	cursor ...string,
 ) (*WorkspaceStream, error) {
-	u, err := url.Parse(c.baseURL + "/ws")
+	path := "/ws"
+	if id == 0 {
+		path = "/ws/work-invites"
+	}
+	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return nil, err
 	}

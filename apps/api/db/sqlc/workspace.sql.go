@@ -37,7 +37,7 @@ func (q *Queries) AppendWorkspaceEvent(ctx context.Context, arg AppendWorkspaceE
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files, review_by FROM post_workspaces WHERE post_id = $1
+SELECT post_id, last_event_id, submitted_at, submission, review_state, submission_version, review_note, delivery_files, review_by, refund_blocked FROM post_workspaces WHERE post_id = $1
 `
 
 func (q *Queries) GetWorkspace(ctx context.Context, postID int64) (PostWorkspace, error) {
@@ -53,6 +53,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, postID int64) (PostWorkspace
 		&i.ReviewNote,
 		&i.DeliveryFiles,
 		&i.ReviewBy,
+		&i.RefundBlocked,
 	)
 	return i, err
 }
@@ -278,7 +279,7 @@ UPDATE post_workspaces SET submitted_at = NOW(), submission = $2,
     review_by = CASE WHEN p.review_window_seconds > 0 THEN NOW() + p.review_window_seconds * INTERVAL '1 second' END
 FROM posts p
 WHERE post_workspaces.post_id = $1 AND p.id = post_workspaces.post_id
-    AND review_state IN ('working', 'changes_requested') RETURNING post_workspaces.post_id, post_workspaces.last_event_id, post_workspaces.submitted_at, post_workspaces.submission, post_workspaces.review_state, post_workspaces.submission_version, post_workspaces.review_note, post_workspaces.delivery_files, post_workspaces.review_by
+    AND review_state IN ('working', 'changes_requested') RETURNING post_workspaces.post_id, post_workspaces.last_event_id, post_workspaces.submitted_at, post_workspaces.submission, post_workspaces.review_state, post_workspaces.submission_version, post_workspaces.review_note, post_workspaces.delivery_files, post_workspaces.review_by, post_workspaces.refund_blocked
 `
 
 type SubmitWorkspaceParams struct {
@@ -300,6 +301,7 @@ func (q *Queries) SubmitWorkspace(ctx context.Context, arg SubmitWorkspaceParams
 		&i.ReviewNote,
 		&i.DeliveryFiles,
 		&i.ReviewBy,
+		&i.RefundBlocked,
 	)
 	return i, err
 }

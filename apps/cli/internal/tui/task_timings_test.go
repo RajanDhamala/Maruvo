@@ -11,15 +11,17 @@ import (
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
 )
 
-func TestCreationTimingsRequireDeliveryAndPreserveDraft(t *testing.T) {
+func TestCreationTimingsDefaultDeliveryAndPreserveDraft(t *testing.T) {
 	m := dashboardFixture()
 	m.screen, m.form = newPostScreen, newPostForm()
 	m.form.fields[0].insert("Explicit timing task")
 	m.form.descriptionSource = descriptionFromText
 	m.form.fields[3].insert("Keep this description.")
 
-	if _, err := m.form.payload(); err == nil {
-		t.Fatal("publishing must require an explicit delivery date")
+	initial, err := m.form.payload()
+	if err != nil || initial.FundingWindowSeconds != 24*3600 || initial.ReviewWindowSeconds != 24*3600 ||
+		!initial.DeliverBy.Equal(initial.EndTime.Add(48*time.Hour)) {
+		t.Fatalf("a new task must have valid editable timing defaults: %v", err)
 	}
 
 	acceptBy := m.form.fields[2].value
@@ -61,6 +63,80 @@ func TestCreationTimingsRequireDeliveryAndPreserveDraft(t *testing.T) {
 	m.form.timings[1].value = deadline.Add(8 * time.Hour).Format("2006-01-02 15:04")
 	if _, err := m.form.payload(); err == nil {
 		t.Fatal("delivery must follow the entire acceptance and funding window")
+	}
+
+	next, cmd := m.submitPost()
+	if cmd != nil || next.(model).err == nil {
+		t.Fatal("publishing must not replace an invalid manually selected delivery date")
+	}
+}
+
+func TestDefaultDeliveryFollowsAcceptanceAndFundingUntilChosen(t *testing.T) {
+	m := dashboardFixture()
+	m.screen, m.form = newPostScreen, newPostForm()
+	m.form.fields[0].insert("Task with default delivery")
+	m.form.descriptionSource = descriptionFromText
+	m.form.fields[3].insert("Keep this draft.")
+	m = m.openDeadline()
+	m.picker.selectDate(time.Now().Add(4 * 24 * time.Hour))
+	next, _ := m.applyDeadline()
+	m = next.(model)
+
+	payload, err := m.form.payload()
+	if err != nil || !payload.DeliverBy.Equal(payload.EndTime.Add(48*time.Hour)) {
+		t.Fatalf("default delivery did not follow the changed acceptance cutoff: %v", err)
+	}
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	next, _ = next.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	next, _ = next.Update(tea.PasteMsg{Content: "48"})
+	m = next.(model)
+
+	payload, err = m.form.payload()
+	if err != nil || !payload.DeliverBy.Equal(payload.EndTime.Add(72*time.Hour)) {
+		t.Fatalf("default delivery did not follow pasted funding hours: %v", err)
+	}
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	next, _ = next.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(model)
+	m.picker.selectDate(payload.DeliverBy.AddDate(0, 0, 10))
+	chosen, _ := m.picker.value()
+	next, _ = m.applyDeadline()
+	m = next.(model)
+
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	next, _ = next.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	next, _ = next.Update(tea.KeyPressMsg{Code: '7', Text: "7"})
+	next, _ = next.Update(tea.KeyPressMsg{Code: '2', Text: "2"})
+	next, _ = next.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = next.(model)
+	m = m.openDeadline()
+	m.picker.selectDate(m.picker.date.AddDate(0, 0, 1))
+	next, _ = m.applyDeadline()
+	m = next.(model)
+
+	payload, err = m.form.payload()
+	if err != nil || !payload.DeliverBy.Equal(chosen) || payload.FundingWindowSeconds != 72*3600 ||
+		m.form.fields[3].value != "Keep this draft." {
+		t.Fatalf("later timing edits replaced the chosen delivery date or draft: %v", err)
+	}
+}
+
+func TestPublishingFillsMissingDefaultDelivery(t *testing.T) {
+	m := dashboardFixture()
+	m.screen, m.form = newPostScreen, newPostForm()
+	m.form.fields[0].insert("Task with missing delivery")
+	m.form.descriptionSource = descriptionFromText
+	m.form.fields[3].insert("Keep the existing draft.")
+	m.form.timings[1].value, m.form.deliveryDefault = "", false
+
+	next, cmd := m.submitPost()
+
+	m = next.(model)
+	if cmd == nil || m.err != nil || m.form.timings[1].value == "" ||
+		m.form.fields[3].value != "Keep the existing draft." {
+		t.Fatal("publishing a draft with no delivery date should populate its default")
 	}
 }
 

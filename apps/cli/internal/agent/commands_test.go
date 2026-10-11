@@ -189,6 +189,9 @@ func TestInvalidDeliveryArgumentsBeforeLogin(t *testing.T) {
 		{"history", "--post", "1", "--before", "-1"},
 		{"history", "--post", "1", "--limit", "0"},
 		{"history", "--post", "1", "--limit", "101"},
+		{"control"},
+		{"control", "--post", "0", "--mode", "manual"},
+		{"control", "--post", "1", "--mode", "unknown"},
 	} {
 		var out, log bytes.Buffer
 

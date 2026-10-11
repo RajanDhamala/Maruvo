@@ -115,6 +115,8 @@ func (q *Queries) LockActiveAgentGrant(ctx context.Context, id pgtype.UUID) (Age
 const resolveAgentGrant = `-- name: ResolveAgentGrant :one
 SELECT g.id, g.owner_id, g.post_id, g.name, g.token_hash, g.permissions, g.expires_at, g.revoked_at, g.created_at FROM agent_grants g JOIN users u ON u.id = g.owner_id
 WHERE g.token_hash = $1 AND g.revoked_at IS NULL AND g.expires_at > NOW()
+AND NOT EXISTS (SELECT 1 FROM post_agent_controls c
+    WHERE c.post_id = g.post_id AND c.owner_id = g.owner_id AND c.mode = 'manual')
 `
 
 func (q *Queries) ResolveAgentGrant(ctx context.Context, tokenHash string) (AgentGrant, error) {

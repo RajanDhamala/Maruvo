@@ -20,6 +20,11 @@ type workspaceLoaded struct {
 	workspace  api.Workspace
 	err        error
 }
+
+type agentWorkspaceLoaded struct {
+	info api.PostInfo
+	err  error
+}
 type workspaceConnected struct {
 	generation uint64
 	stream     *api.WorkspaceStream
@@ -38,7 +43,14 @@ type workspaceActionResult struct {
 }
 
 func (m *model) stopWorkspace() {
+	if m.workAgent.active || m.workSetup.armed {
+		m.stopWorkAgent("Task agent stopped when leaving the workspace.")
+	}
+	m.workSetup.generation++
+	m.workSetup.autoReady, m.workSetup.open = false, false
 	m.workspaceGen++
+
+	m.agentControls.open = false
 	if m.workspaceCancel != nil {
 		m.workspaceCancel()
 	}
@@ -47,6 +59,8 @@ func (m *model) stopWorkspace() {
 	m.stream, m.workspaceCancel, m.workspaceCtx = nil, nil, nil
 	m.workspaceAction, m.reviewConfirm, m.workspaceReview = "", false, false
 	m.workspacePendingAction = ""
+	m.activityExpanded = nil
+	m.presence = nil
 	m.reviewVersion = 0
 }
 
@@ -76,7 +90,9 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 	}
 
 	m.loading = false
-	m.setPostError(msg.err)
+	if cmd := m.setPostError(msg.err); cmd != nil {
+		return m, cmd
+	}
 
 	if msg.err != nil {
 		m.live = "Unavailable"
@@ -84,6 +100,7 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 	}
 
 	m.workspace, m.escrow = msg.workspace, msg.workspace.Escrow
+	m.workspace.Events = uniqueWorkspaceEvents(m.workspace.Events)
 	for i := range m.posts {
 		if m.posts[i].ID == msg.workspace.Post.ID {
 			m.posts[i] = msg.workspace.Post
@@ -94,6 +111,15 @@ func (m model) workspaceLoaded(msg workspaceLoaded) (tea.Model, tea.Cmd) {
 
 	if action := m.workspacePendingAction; action != "" {
 		m.workspacePendingAction = ""
+		if action == "work-invite" && m.invitations.accepted != nil {
+			invitation := *m.invitations.accepted
+			m.invitations.accepted = nil
+			next, cmd := m.openWorkSetup("")
+			m = next.(model)
+			m.workSetup.invite = false
+			m.workSetup.target = invitation.Nonce
+			return m, tea.Batch(m.connectWorkspace(), cmd)
+		}
 		if action == "u" {
 			next, cmd := m.startAttachment()
 			m, compose = next.(model), cmd
@@ -128,7 +154,11 @@ func (m model) workspaceConnected(msg workspaceConnected) (tea.Model, tea.Cmd) {
 		if errors.As(msg.err, &failure) &&
 			(failure.StatusCode == 401 || failure.StatusCode == 403 || failure.StatusCode == 404) {
 			m.stopWorkspace()
-			m.setPostError(msg.err)
+
+			if cmd := m.setPostError(msg.err); cmd != nil {
+				return m, cmd
+			}
+
 			m.live = "Disconnected"
 
 			return m, nil
@@ -141,7 +171,7 @@ func (m model) workspaceConnected(msg workspaceConnected) (tea.Model, tea.Cmd) {
 
 	m.stream, m.live = msg.stream, "Live"
 
-	return m, m.readWorkspace()
+	return m, tea.Batch(m.readWorkspace(), m.refreshRemoteStatus())
 }
 
 func (m model) readWorkspace() tea.Cmd {
@@ -168,8 +198,7 @@ func (m model) workspaceFrame(msg workspaceFrame) (tea.Model, tea.Cmd) {
 
 		m.stream = nil
 		if websocket.IsCloseError(msg.err, websocket.ClosePolicyViolation) {
-			m.setPostError(&api.Error{StatusCode: 401, Message: "session expired"})
-			return m, nil
+			return m, m.setPostError(&api.Error{StatusCode: 401, Message: "session expired"})
 		}
 
 		m.live = "Reconnecting..."
@@ -182,34 +211,44 @@ func (m model) workspaceFrame(msg workspaceFrame) (tea.Model, tea.Cmd) {
 		if err := json.Unmarshal(msg.frame.Data, &event); err != nil {
 			m.err = err
 		} else {
-			m.applyWorkspaceEvent(event)
+			if m.applyWorkspaceEvent(event) {
+				m.wakeWorkAgent(event)
+			}
 		}
 	}
 
 	return m, m.readWorkspace()
 }
 
-func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
+func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) bool {
 	if event.PostID != m.workspace.Post.ID {
-		return
+		return false
+	}
+
+	for i, existing := range m.workspace.Events {
+		if sameWorkspaceEvent(existing, event) {
+			m.workspace.Events[i] = mergeReplayIdentity(existing, event)
+			if api.StreamCursorAfter(event.StreamID, m.workspace.Cursor) {
+				m.workspace.Cursor = event.StreamID
+			}
+			if event.ID > m.workspace.State.LastEventID {
+				m.workspace.State.LastEventID = event.ID
+			}
+			return false
+		}
 	}
 
 	if event.StreamID != "" {
 		if !api.StreamCursorAfter(event.StreamID, m.workspace.Cursor) {
-			return
+			return false
 		}
 
 		m.workspace.Cursor = event.StreamID
-		for _, existing := range m.workspace.Events {
-			if existing.StreamID == event.StreamID {
-				return
-			}
-		}
 	}
 
 	if event.ID > 0 {
 		if event.ID <= m.workspace.State.LastEventID {
-			return
+			return false
 		}
 
 		m.workspace.State.LastEventID = event.ID
@@ -227,6 +266,7 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		SHA256            string     `json:"sha256"`
 		Status            string     `json:"status"`
 		State             string     `json:"state"`
+		Detail            string     `json:"detail"`
 		Signature         string     `json:"signature"`
 		Note              string     `json:"note"`
 		SubmittedAt       *time.Time `json:"submitted_at"`
@@ -238,16 +278,37 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		ReviewState       string     `json:"review_state"`
 		Purpose           string     `json:"purpose"`
 		DeliveryFiles     []string   `json:"delivery_files"`
+		RefundBlocked     bool       `json:"refund_blocked"`
 	}
 	if json.Unmarshal(event.Data, &data) != nil {
-		return
+		return false
 	}
 
 	switch event.Kind {
+	case "file.accessed":
+		m.workspace.State.RefundBlocked = m.workspace.State.RefundBlocked || data.RefundBlocked
+		if m.workspace.State.RefundBlocked && m.workspaceAction == "x" {
+			m.workspaceAction, m.reviewConfirm = "", false
+			m.err = errors.New("Worker file access recorded. Refunds through Maruvo are blocked pending dispute resolution.")
+		}
+	case "agent.control":
+		var control api.AgentControl
+		if json.Unmarshal(event.Data, &control) == nil && control.OwnerID == parseUser(m.user.ID) &&
+			!newerAgentControl(m.workspace.AgentControl, control) {
+			m.workspace.AgentControl = control
+			if m.agentControls.open {
+				m.agentControls.control = control
+			}
+		}
+	case "agent.activity":
+		m.workspace.Post.Remote.Status = data.State
+		m.workspace.Post.Remote.Detail = data.Detail
+		m.workspace.Post.Remote.WorkerSeen = &event.CreatedAt
+		m.workspace.Post.Remote.WorkerOnline = data.State != "failed" && data.State != "interrupted"
 	case "file.shared":
 		for _, file := range m.workspace.Files {
 			if file.ID == data.ID {
-				return
+				return false
 			}
 		}
 
@@ -320,11 +381,25 @@ func (m *model) applyWorkspaceEvent(event api.WorkspaceEvent) {
 		}
 	}
 
+	switch {
+	case m.workspace.Post.Status == "completed":
+		m.workspace.Post.Remote.Status = "completed"
+	case m.workspace.Post.Status == "cancelled":
+		m.workspace.Post.Remote.Status = "cancelled"
+	case m.workspace.Escrow.State == "refunded":
+		m.workspace.Post.Remote.Status = "refunded"
+	case m.workspace.State.ReviewState == "submitted":
+		m.workspace.Post.Remote.Status = "waiting_for_review"
+	case m.workspace.Escrow.State != "confirmed":
+		m.workspace.Post.Remote.Status = "waiting_for_funding"
+	}
+
 	if (m.workspaceAction == "a" || m.workspaceAction == "x" || m.workspaceAction == "e") &&
 		!m.reviewIsCurrent() {
 		m.workspaceAction, m.workspaceInput, m.reviewConfirm = "", textField{}, false
 		m.notice = "Delivery changed. Reopen review before deciding."
 	}
+	return true
 }
 
 func (m model) updateWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -368,6 +443,36 @@ func (m model) updateWorkspace(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "workspace-continue":
+		return m.continueWorkAgent()
+	case "workspace-agent":
+		if m.workAgent.active || m.workSetup.armed {
+			m.stopWorkAgent("Your agent stopped.")
+			return m, m.saveLocalConversation()
+		}
+		if !m.hasConnectedAgent() {
+			return m.openProviders()
+		}
+		next, cmd := m.startWorkAgent(strings.TrimSpace(m.composer.draft.value))
+		m = next.(model)
+		if m.workAgent.active {
+			m.composer.draft = textField{limit: 4000}
+		}
+		return m, cmd
+	case "workspace-connect-agent":
+		return m.openProviders()
+	case "workspace-invite":
+		if !m.hasConnectedAgent() {
+			return m.openProviders()
+		}
+		next, cmd := m.openWorkSetup(strings.TrimSpace(m.composer.draft.value))
+		m = next.(model)
+		if m.workSetup.open {
+			m.composer.draft = textField{limit: 4000}
+		}
+		return m, cmd
+	case "workspace-control":
+		return m.openAgentControls()
 	case "q":
 		m.stopWorkspace()
 		return m, tea.Quit
@@ -402,14 +507,32 @@ func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.workspaceFiles {
 			m.fileSelection = max(0, m.fileSelection-1)
+		} else if m.workspaceReview {
+			m.activityScroll = max(0, m.activityScroll-1)
 		} else {
 			m.activityScroll++
 		}
 	case "down", "j":
 		if m.workspaceFiles {
 			m.fileSelection = min(max(0, len(m.workspace.Files)-1), m.fileSelection+1)
+		} else if m.workspaceReview {
+			m.activityScroll = min(m.reviewMaxScroll(), m.activityScroll+1)
 		} else {
 			m.activityScroll = max(0, m.activityScroll-1)
+		}
+	case "pgup", "pgdown", "home", "end":
+		if m.workspaceReview {
+			limit := m.reviewMaxScroll()
+			switch key {
+			case "pgup":
+				m.activityScroll = max(0, m.activityScroll-m.reviewBodyHeight())
+			case "pgdown":
+				m.activityScroll = min(limit, m.activityScroll+m.reviewBodyHeight())
+			case "home":
+				m.activityScroll = 0
+			case "end":
+				m.activityScroll = limit
+			}
 		}
 	case "m":
 		m.workspaceFiles, m.workspaceReview = false, false
@@ -433,6 +556,10 @@ func (m model) workspaceCommand(key string) (tea.Model, tea.Cmd) {
 
 		m.workspaceAction, m.workspaceInput, m.err, m.notice = key, textField{limit: 4000}, nil, ""
 	case "a", "x", "e":
+		if key == "x" && m.workspace.State.RefundBlocked {
+			m.err = errors.New("Worker file access recorded. Refunds through Maruvo are blocked pending dispute resolution.")
+			return m, nil
+		}
 		if !m.canReviewAction(key) {
 			m.err = errors.New("Reviewer wallet approval is required; payout needs submitted, funded work.")
 			return m, nil
@@ -511,6 +638,13 @@ func (m model) workspaceLayout() postLayout {
 	}
 
 	l.rows = append(l.rows, muted("Delivery: "+strings.ReplaceAll(m.workspace.State.ReviewState, "_", " ")))
+	if m.workspaceReview && height >= 24 {
+		l.rows = append(l.rows, flowRows(m.workspaceFlow(), width)...)
+	}
+	if post.Remote.Status != "" {
+		l.rows = append(l.rows, muted(remoteLabel(post)))
+	}
+
 	if m.workspace.Settlement.State != "" {
 		l.rows = append(
 			l.rows,
@@ -545,6 +679,11 @@ func (m model) workspaceLayout() postLayout {
 		}
 
 		l.rows = append(l.rows, "", bold(label), m.workspaceInput.input(width, true), "")
+		if m.workspaceAction == "d" && m.protectedFileDownload(m.fileSelection) {
+			for _, row := range reviewTextRows("Access is recorded before transfer; downloading blocks unilateral refunds in Maruvo. It does not approve payment.", width) {
+				l.rows = append(l.rows, muted(row))
+			}
+		}
 		l.buttons([]string{buttonLabel, "Cancel"}, []string{"workspace-send", "cancel"})
 
 		l.footer = "Enter confirm   Esc cancel"
@@ -570,7 +709,7 @@ func (m model) workspaceLayout() postLayout {
 
 	l.rows = append(l.rows, "")
 	if m.workspaceReview {
-		return m.reviewLayout(l)
+		return m.reviewLayout()
 	}
 
 	if m.workspaceFiles {
@@ -638,6 +777,15 @@ func (m model) downloadWorkspaceFile(index int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) protectedFileDownload(index int) bool {
+	if index < 0 || index >= len(m.workspace.Files) || m.isWorker(m.workspace.Post) {
+		return false
+	}
+	file := m.workspace.Files[index]
+	worker := m.workspace.Post.AcceptedBy
+	return worker != nil && file.UploadedBy == *worker && file.Purpose != "input"
+}
+
 func (m model) eventLabel(event api.WorkspaceEvent) string {
 	actor := "System"
 	if event.ActorID != nil {
@@ -648,16 +796,40 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 	}
 
 	var data struct {
-		Text   string `json:"text"`
-		Name   string `json:"name"`
-		Note   string `json:"note"`
-		State  string `json:"state"`
-		Status string `json:"status"`
-		Stage  string `json:"stage"`
+		Text          string `json:"text"`
+		Name          string `json:"name"`
+		Note          string `json:"note"`
+		State         string `json:"state"`
+		Status        string `json:"status"`
+		Stage         string `json:"stage"`
+		AgentName     string `json:"agent_name"`
+		RefundBlocked bool   `json:"refund_blocked"`
 	}
 
 	_ = json.Unmarshal(event.Data, &data)
+	if data.AgentName != "" {
+		actor += " · agent " + plain(data.AgentName)
+	}
+
 	switch event.Kind {
+	case "agent.control":
+		var control api.AgentControl
+
+		_ = json.Unmarshal(event.Data, &control)
+
+		if control.Mode == "manual" {
+			return actor + " took manual control; their task agent access is paused."
+		}
+
+		return actor + " allowed agent access for this task."
+	case "agent.activity":
+		var activity struct {
+			Detail string `json:"detail"`
+		}
+
+		_ = json.Unmarshal(event.Data, &activity)
+
+		return "Remote agent: " + strings.ReplaceAll(data.State, "_", " ") + " · " + plain(activity.Detail)
 	case "task.overdue":
 		if data.Stage == "fund" {
 			return "Funding deadline passed. The requester can cancel/reopen once active funding expires."
@@ -670,6 +842,12 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 		return actor + ": " + plain(data.Text)
 	case "file.shared":
 		return actor + " shared " + plain(data.Name)
+	case "file.accessed":
+		label := actor + " accessed " + plain(data.Name)
+		if data.RefundBlocked {
+			label += " · refunds blocked in Maruvo"
+		}
+		return label
 	case "work.submitted":
 		return actor + " submitted work: " + plain(data.Note)
 	case "review.changes_requested":
@@ -699,4 +877,49 @@ func (m model) eventLabel(event api.WorkspaceEvent) string {
 	}
 
 	return event.Kind
+}
+
+func sameWorkspaceEvent(a, b api.WorkspaceEvent) bool {
+	if a.PostID != b.PostID {
+		return false
+	}
+	if a.ID > 0 && a.ID == b.ID {
+		return true
+	}
+	if a.StreamID != "" && a.StreamID == b.StreamID {
+		return true
+	}
+	if a.Kind != "message" || b.Kind != "message" || a.ActorID == nil || b.ActorID == nil || *a.ActorID != *b.ActorID {
+		return false
+	}
+	var x, y struct {
+		MessageID string `json:"message_id"`
+	}
+	return json.Unmarshal(a.Data, &x) == nil && json.Unmarshal(b.Data, &y) == nil && x.MessageID != "" && x.MessageID == y.MessageID
+}
+func mergeReplayIdentity(existing, replay api.WorkspaceEvent) api.WorkspaceEvent {
+	if existing.ID == 0 {
+		existing.ID = replay.ID
+	}
+	if api.StreamCursorAfter(replay.StreamID, existing.StreamID) {
+		existing.StreamID = replay.StreamID
+	}
+	return existing
+}
+func uniqueWorkspaceEvents(events []api.WorkspaceEvent) []api.WorkspaceEvent {
+	result := make([]api.WorkspaceEvent, 0, len(events))
+	for _, event := range events {
+		duplicate := false
+		for i, existing := range result {
+			if sameWorkspaceEvent(existing, event) {
+				result[i] = mergeReplayIdentity(existing, event)
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			result = append(result, event)
+		}
+	}
+	return result
 }

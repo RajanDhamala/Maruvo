@@ -4,12 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/rajandhamala/Maruvo/cli/internal/api"
-	"github.com/rajandhamala/Maruvo/cli/internal/wallet"
 )
 
 type reviewPrepared struct {
@@ -29,8 +27,8 @@ func (m model) canReviewAction(action string) bool {
 
 	state := m.workspace.State
 	if action == "x" {
-		return state.ReviewState == "working" || state.ReviewState == "submitted" ||
-			state.ReviewState == "changes_requested"
+		return !state.RefundBlocked && (state.ReviewState == "working" || state.ReviewState == "submitted" ||
+			state.ReviewState == "changes_requested")
 	}
 
 	return (action == "a" || action == "e") && state.SubmissionVersion > 0 && state.ReviewState == "submitted"
@@ -59,7 +57,9 @@ func (m model) reviewPrepared(msg reviewPrepared) (tea.Model, tea.Cmd) {
 	}
 
 	m.loading = false
-	m.setPostError(msg.err)
+	if cmd := m.setPostError(msg.err); cmd != nil {
+		return m, cmd
+	}
 
 	if msg.err == nil {
 		if !m.reviewIsCurrent() || msg.plan.Settlement.SubmissionVersion != m.reviewVersion {
@@ -92,7 +92,15 @@ func (m model) signSettlement() (tea.Model, tea.Cmd) {
 	m.loading, m.err = true, nil
 
 	return m, func() tea.Msg {
-		key, err := wallet.Load()
+		current, err := m.client.Workspace(ctx, m.token, post.ID)
+		if err != nil {
+			return workspaceActionResult{generation: generation, err: err}
+		}
+		if current.State.SubmissionVersion != plan.Settlement.SubmissionVersion ||
+			(plan.Settlement.Action == "refund" && current.State.RefundBlocked) {
+			return workspaceActionResult{generation: generation, err: errors.New("Review changed or refund is blocked after file access. Reopen review before signing.")}
+		}
+		key, err := m.loadWallet(ctx)
 		if err != nil {
 			return workspaceActionResult{generation: generation, err: err}
 		}
@@ -115,14 +123,14 @@ func (m model) reviewConfirmationLayout() postLayout {
 
 	title, recipient, buttonLabel := "Pay the worker?", post.WorkerWallet, "Sign & pay worker"
 	if plan.Settlement.Action == "refund" {
-		title, recipient, buttonLabel = "Refund the poster?", post.PosterWallet, "Sign & refund poster"
+		title, recipient, buttonLabel = "Refund the requester?", post.PosterWallet, "Sign & refund requester"
 	}
 
 	l := postLayout{
 		rows: []string{
 			bold(title),
 			"",
-			fmt.Sprintf("Escrow amount  %d lamports", post.CostLamports),
+			"Escrow amount  " + taskBudget(post.CostLamports),
 			fmt.Sprintf("Network fee    %d lamports", plan.Settlement.FeeLamports),
 			"Network        " + plan.Escrow.Network,
 			"Recipient      " + ansi.Truncate(recipient, max(1, m.contentWidth()-15), "…"),
@@ -155,70 +163,6 @@ func (m model) reviewConfirmationLayout() postLayout {
 
 	if m.loading {
 		l.footer = "Submitting reviewer-signed settlement..."
-	}
-
-	return l
-}
-
-func (m model) reviewLayout(l postLayout) postLayout {
-	width := m.contentWidth()
-	_, height := m.dimensions()
-
-	state := m.workspace.State
-	if height < 20 {
-		l.rows = []string{bold("Review · " + state.ReviewState)}
-	}
-
-	l.rows = append(l.rows, "", bold(fmt.Sprintf("Delivery · version %d", state.SubmissionVersion)))
-
-	body := []string{}
-	if state.SubmittedAt == nil {
-		body = append(body, muted("The worker has not submitted delivery yet."))
-	} else {
-		body = append(body, muted(state.SubmittedAt.Local().Format("02 Jan 2006, 15:04")))
-		if state.ReviewBy != nil {
-			label := "Review by " + state.ReviewBy.Local().Format("02 Jan, 15:04")
-			if !time.Now().Before(*state.ReviewBy) {
-				label += " · overdue"
-			}
-
-			body = append(body, accent(label))
-		}
-
-		if m.workspace.Post.DeliverBy != nil && state.SubmittedAt.After(*m.workspace.Post.DeliverBy) {
-			body = append(body, muted("Delivered after the agreed deadline."))
-		}
-
-		body = append(body, strings.Split(ansi.Wrap(plain(state.Submission), max(1, width), " "), "\n")...)
-		for _, id := range state.DeliveryFiles {
-			for _, file := range m.workspace.Files {
-				if file.ID == id {
-					body = append(body, "File: "+plain(file.Name))
-					break
-				}
-			}
-		}
-	}
-
-	if state.ReviewNote != "" {
-		body = append(body, "", bold("Requested changes"))
-		body = append(body, strings.Split(ansi.Wrap(plain(state.ReviewNote), max(1, width), " "), "\n")...)
-	}
-
-	available := max(1, m.bodyHeight()-len(l.rows)-2)
-	start := min(m.activityScroll, max(0, len(body)-available))
-	l.rows = append(l.rows, body[start:min(len(body), start+available)]...)
-
-	l.rows = append(l.rows, "")
-	if m.workspace.CanReview && state.ReviewState == "submitted" && m.workspace.Escrow.State == "confirmed" {
-		l.buttons([]string{"Approve & pay", "Refund", "Request changes"}, []string{"a", "x", "e"})
-		l.footer = "a approve & pay · x refund · e request changes · Esc chat"
-	} else if m.canReviewAction("x") {
-		l.buttons([]string{"Refund", "Chat", "Files"}, []string{"x", "v", "workspace-tab"})
-		l.footer = "x refund · Esc chat · Tab files · ↑↓ scroll · b task"
-	} else {
-		l.buttons([]string{"Chat", "Files"}, []string{"v", "workspace-tab"})
-		l.footer = "Esc chat · Tab files · ↑↓ scroll · b task"
 	}
 
 	return l

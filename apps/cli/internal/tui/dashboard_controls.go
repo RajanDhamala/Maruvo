@@ -180,7 +180,7 @@ func (m model) dashboardEmptyState() dashboardEmptyState {
 	default:
 		return dashboardEmptyState{
 			"No open tasks yet.",
-			"Post a task with a brief, budget, and deadline.",
+			"Create a task. Fund escrow after a worker accepts.",
 			" + Create task ",
 			"create",
 		}
